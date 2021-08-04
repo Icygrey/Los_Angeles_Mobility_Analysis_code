@@ -1,0 +1,1231 @@
+---
+title: "covid_19_correlation_NB_01"
+author: "Tao Huang"
+date: "5/26/2021"
+output: html_document
+---
+
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+*总要求（要考虑lag time）:*
+2) Dichotomize distance travelled from home into various levels
+3) Correlations between COVID-IR and mobility variables
+a) Prepare a ALL_VAR “long” dataframe with each column specifying:
+i) Area (neighborhood or census tract)
+ii) Date
+iii) 4 mobility variables
+iv) COVID IR variable
+b) So the ALL_VAR dataframe will have # rows = # Areas X # dates
+c) Then you can use the ALL_VAR dataframe to do correlations between COVID IR and mobility
+variables, across all neighborhoods, on different dates
+4) Pull census variables from `tidycensus` package (I already shared code with you)f
+a) Get the census variables for: race/ethnicity, poverty, insurance status, education, and population and household density
+i) (we can talk more about what to search for and how to choose the right variables) b) Add variables to the ALL_VAR dataframe
+
+
+*目标： 要做Neighborhood 级别的合并数据集---相关性分析。*
+Then you can use the ALL_VAR dataframe to do correlations between COVID IR and mobility
+variables, across all neighborhoods, on different dates
+
+1. 关于aj和caj
+除了median_devices_completely_at_home( ?这是指devices_completely_at_home吗？ )要用aj+caj，其它用aj
+
+
+# 1.合并三大数据集：
+1.mobility dataset + NB/FIPS + date:
+○ completely_home_device_count   chdc
+○ median_percentage_time_home    mpth
+○ full_time_work_behavior_devices    mpth
+○ distance_traveled_from_home     dtrh
+
+再加3？？？？？？：
+○ median_home_dwell_time    mhdt
+○ median_non_home_dwell_time    mnhdt
+○ part_time_work_behavior_devices   ptwbd
+
+
+2.covid_19 dataset:
+
+3. census dataset: 
+race/ethnicity, poverty, insurance status, education, and population and household density
+
+
+# 2.研究week 模式还是daily模式？？？
+此处*先做daily pattern！！*  ----》 这样，之后做week pattern会简单很多。
+
+# 3.之后还可以研究整个LAC的correlation（图像表示：多变量时间序列图。）
+
+
+*key*: 想要合并3 大数据集：row数量(大概15万左右)要一致（通用300左右个NB、每个NB时间跨度 一模一样。（mobility数据集先不用计算Zeta？））
+
+mobility data 数据整合成NB方法：
+aggregatedArea_adjusted_count =
+■ population_aggregated_area*[sum_over_aggregatedArea(this_variable_raw_count) /
+■ sum_over_aggregatedArea(device_count)]
+
+
+*May 27讨论问题：*
+1。应该使用week pattern还是dailiy pattern。
+2.做相关性分析，应该使用每个变量的Zeta 还是变量原本的数值。
+---我觉得应该是根据地区总人口调解后的crude_ir_dp 和 根据地区总人口调解后的V1值(不是zeta)比较。
+
+I'm sorry that I haven't finished the third task yet. I have encountered some problems.
+1. Should we use the week pattern or the dailiy pattern to do correlation analysis? ()
+2. For correlation analysis, should you use the Zeta of each variable or the ajusted original value of these variable.
+3. I have tried to inner join the completely_home_device_count datasets and covid-19 data sets.What kind of analysis do you think I should do next？Linear regression?
+
+
+# A. wrangle mobility data (daily pattern    +   fixed NB levels   +   value aggregated to NB)
+```{R}
+test_chdc<-aj_com_nb_sd
+setnames(test_chdc,'V1','adjust_completely_home_device_count')
+test_chdc
+```
+```{R}
+test_chdc   #2020-03-02开始  ---2021-03-31	
+
+test_chdc[order(test_chdc$start_date,decreasing = T)]
+test_chdc<-test_chdc[start_date>='2020-03-16']
+
+test_chdc
+```
+
+
+
+
+
+# B. wrangle covid_19 data (daily pattern    +   fixed NB levels   +   value aggregated to NB)
+```{R}
+case_data <- fread("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/latimes-place-totals.csv ")
+case_data<-as.data.frame(case_data)
+
+case_data <- subset(case_data, county == "Los Angeles")
+case_data$date <- as.Date(case_data$date)
+case_data$name <- as.character(case_data$name)
+covidate<-case_data
+
+
+# Regulation the name
+covidate$name<-gsub('[0-9.*]+: ','',covidate$name)
+covidate$name<-gsub('[0-9.*]+: ','',covidate$name)
+covidate$name<-gsub('[a-z.*] - ','',covidate$name)
+covidate$name<-gsub('[U]nincorporate','',covidate$name)
+covidate<-as.data.table(covidate)
+
+
+
+
+# NB levels + daily pattern
+covidate_dp<-covidate[,.(name,date,confirmed_cases,population)]
+covidate_dp[,sum_pop:=sum(population),by=.(date,name)]
+covidate_dp[,sum_con_cases:=sum(confirmed_cases),by=.(date,name)]   #只是为了合并当日。
+
+covidate_dp<-covidate_dp[,.(name,date,sum_pop,sum_con_cases)]
+covidate_dp<-covidate_dp[!duplicated(covidate_dp),]
+
+#tail(covidate_dp)  数据大概从3/16-2020起。   
+
+
+
+###计算new case
+covidate_dp = covidate_dp %>%
+  group_by(name) %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = sum_con_cases - lag(sum_con_cases)) %>% # Difference in case between days 
+ arrange(name) 
+covidate_dp$new_cases[is.na(covidate_dp$new_cases)]<-0
+##求变量
+covidate_dp<-as.data.table(covidate_dp)
+covidate_dp[,crude_ir_dp:= (new_cases/sum_pop)*100000,]
+covidate_dp$crude_ir_dp[is.na(covidate_dp$crude_ir_dp)]<-0
+covidate_dp[crude_ir_dp<0]$crude_ir_dp<-0
+covidate_dp[crude_ir_dp>10000]$crude_ir_dp<-10000
+covidate_dp<-covidate_dp[!(sum_pop %in% 0)]
+covidate_dp<-as.data.table(covidate_dp)
+covidate_dp   #2020-03-16	开始 ----2021 -05-26
+
+
+
+#test
+order()
+
+covidate_dp[order(covidate_dp$date,decreasing = T)]
+test_covidate_dp<-covidate_dp
+test_covidate_dp<-test_covidate_dp[date<='2021-03-31']
+
+
+
+```
+##inner join
+
+```{R}
+
+test_chdc[,start_date:=as.Date(start_date)]
+test_covidate_dp
+
+
+
+test<-inner_join(test_chdc,test_covidate_dp,by=c('CSA_NAME'='name','start_date'='date'))
+test
+
+#middle of march 
+```
+
+
+*重新组织*
+
+
+
+```{R}
+library(lubridate)
+
+Rt<- fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/Rt_table_Tao.csv')
+
+Rt<-Rt[2:nrow(Rt)]
+#正则提取：
+Rt<-Rt[,Rt:=str_extract(Rt$V2,'.+[[:space:]]')]
+Rt<-Rt[,Rt:=as.double(Rt)]
+
+Rt<-Rt[,start_date:=as.IDate(mdy(V1))]
+setnames(Rt,'V2','Rt_ci')
+
+
+Rt<-Rt[,.(start_date,Rt,Rt_ci)]
+Rt
+
+```
+*Rt_timelag*
+## M 数据 和 Rt数据错位做图
+```{R}
+cor_aj_com_lac_sd<-aj_com_lac_sd[,.(start_date,aj_rollmean)]
+cor_aj_com_lac_sd<-cor_aj_com_lac_sd[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_base<-cor_aj_com_lac_sd
+
+##loop
+cor_rt_chdc<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd<-cor_aj_com_lac_sd_base
+  cor_aj_com_lac_sd$start_date<-cor_aj_com_lac_sd$start_date+i
+  rt_chdc<-inner_join(cor_aj_com_lac_sd,Rt,by='start_date')
+  cor_test<-cor.test(rt_chdc$aj_rollmean,rt_chdc$Rt)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_rt_chdc<-rbind(cor_rt_chdc,l)
+}
+
+names(cor_rt_chdc)<-c('Rt_timelag','chdc_R','chdc_P')
+cor_rt_chdc<-as.data.table(cor_rt_chdc)
+
+##
+#mpth
+
+cor_aj_com_lac_sd_mpth<-aj_com_lac_sd_mpth[,.(start_date,aj_rollmean_mpth)]
+cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth[7:nrow(cor_aj_com_lac_sd_mpth)]
+cor_aj_com_lac_sd_mpth_base<-cor_aj_com_lac_sd_mpth
+##loop
+cor_rt_mpth<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth_base
+  cor_aj_com_lac_sd_mpth$start_date<-cor_aj_com_lac_sd_mpth$start_date+i
+  rt_mpth<-inner_join(cor_aj_com_lac_sd_mpth,Rt,by='start_date')
+  cor_test<-cor.test(rt_mpth$aj_rollmean,rt_mpth$Rt)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_rt_mpth<-rbind(cor_rt_mpth,l)
+}
+
+names(cor_rt_mpth)<-c('Rt_timelag','mpth_R','mpth_P')
+cor_rt_mpth<-as.data.table(cor_rt_mpth)
+
+
+##
+#ftwbd
+
+cor_aj_com_lac_sd_ftwbd<-aj_com_lac_sd_ftwbd[,.(start_date,aj_rollmean_ftwbd)]
+cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd[7:nrow(cor_aj_com_lac_sd_ftwbd)]
+cor_aj_com_lac_sd_ftwbd_base<-cor_aj_com_lac_sd_ftwbd
+##loop
+cor_rt_ftwbd<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd_base
+  cor_aj_com_lac_sd_ftwbd$start_date<-cor_aj_com_lac_sd_ftwbd$start_date+i
+  rt_ftwbd<-inner_join(cor_aj_com_lac_sd_ftwbd,Rt,by='start_date')
+  cor_test<-cor.test(rt_ftwbd$aj_rollmean,rt_ftwbd$Rt)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_rt_ftwbd<-rbind(cor_rt_ftwbd,l)
+}
+
+names(cor_rt_ftwbd)<-c('Rt_timelag','ftwbd_R','ftwbd_P')
+cor_rt_ftwbd<-as.data.table(cor_rt_ftwbd)
+
+
+
+##
+#dtrh
+
+cor_aj_com_lac_sd_dtrh<-aj_com_lac_sd_dtrh[,.(start_date,aj_rollmean_dtrh)]
+cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh[7:nrow(cor_aj_com_lac_sd_dtrh)]
+cor_aj_com_lac_sd_dtrh_base<-cor_aj_com_lac_sd_dtrh
+##loop
+cor_rt_dtrh<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh_base
+  cor_aj_com_lac_sd_dtrh$start_date<-cor_aj_com_lac_sd_dtrh$start_date+i
+  rt_dtrh<-inner_join(cor_aj_com_lac_sd_dtrh,Rt,by='start_date')
+  cor_test<-cor.test(rt_dtrh$aj_rollmean,rt_dtrh$Rt)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_rt_dtrh<-rbind(cor_rt_dtrh,l)
+}
+
+names(cor_rt_dtrh)<-c('Rt_timelag','dtrh_R','dtrh_P')
+cor_rt_dtrh<-as.data.table(cor_rt_dtrh)
+
+
+
+```
+
+
+#combine:
+```{R}
+
+
+
+
+cor_rt_sd<-inner_join(cor_rt_chdc,cor_rt_mpth)
+cor_rt_sd<-inner_join(cor_rt_sd,cor_rt_ftwbd)
+cor_rt_sd<-inner_join(cor_rt_sd,cor_rt_dtrh)
+
+view(cor_rt_sd)
+cor_rt_sd
+
+#round 处理
+#cor_rt_sd[,chdc_P:=round(chdc_P,3)]
+
+
+
+cor_rt_sd_plot <-cor_rt_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ Rt_timelag, line.width = 0.00001,span=0.00001,alpha=0.5) %>%
+  add_lines(y =~ chdc_R ,name = 'Completed home device count:R') %>%
+  add_lines(y =~ mpth_R, name = 'median percentage time home:R') %>%
+  add_lines(y =~ ftwbd_R ,name = 'full time work behavior devices:R') %>%
+  add_lines(y =~ dtrh_R ,name = 'distance traveled from home:R') %>%
+  layout(title = "Pearson correlation coefficient varies over Rt_timelag")  
+cor_rt_sd_plot
+
+
+
+```
+
+*结论：确认Rt_timelag*
+（权衡了R和P：R的绝对值大，P要显著（P<0.001），最后选定了：）
+infection incubation period is between 3 - 17 days
+1. chdc   ：lag = 3 ：-0.5172181 1.116375e-25
+
+2. mpth ：lag =7 ：-0.093560568 0.08004148 不显著
+
+3.ftwbd ：  lag=3 ：0.3300909 1.805015e-10
+
+4.dtrh  ： lag=17 ：-0.17277657 0.001360372
+
+*********三个阶段**********
+*NB level*
+
+查看前后政策：
+*Mach 1- May 6* :A    3—5月
+
+*May 7* -end of July--*October 14*   5-10月
+
+*October 15* -mid-Jan,2021 -*March 1, 2021*   10—次年3月
+
+
+###
+```{R}
+cor_covidate_dp<-covidate_dp[,.(date,rollmean_crude_ir)]
+cor_covidate_dp<-cor_covidate_dp[7:nrow(cor_covidate_dp)]
+cor_covidate_dp<-cor_covidate_dp[,date:=as.IDate(date)]
+
+cor_aj_com_lac_sd<-aj_com_lac_sd[,.(start_date,aj_rollmean)]
+cor_aj_com_lac_sd<-cor_aj_com_lac_sd[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_base<-cor_aj_com_lac_sd
+
+
+cor_rt_sd
+```
+##1.我需要NB级别day pattern 的数据集
+
+```{R}
+#Dp/NB级别的Mobility  
+aj_com_nb_sd
+aj_com_nb_sd_mpth
+aj_com_nb_sd_ftwbd
+aj_com_nb_sd_dtrh
+
+
+#Dp/NB级别的IR
+
+covidate_nb_dp
+
+```
+##rollmean_
+```{R}
+#chdc
+#for
+aj_com_nb_sd_roll <- data.table()
+for (i in unique(aj_com_nb_sd$CSA_NAME)){
+  roll_i<-aj_com_nb_sd[CSA_NAME==i]
+  roll_i<-roll_i[,rollmean_zeta_chdc:=rollmean(roll_i$zeta_chdc,k = 7,fill = NA, align = 'right')]
+  aj_com_nb_sd_roll<-rbind(aj_com_nb_sd_roll,roll_i)
+}
+aj_com_nb_sd_roll
+
+
+#for mpth
+aj_com_nb_sd_roll_mpth <- data.table()
+for (i in unique(aj_com_nb_sd_mpth$CSA_NAME)){
+  roll_i<-aj_com_nb_sd_mpth[CSA_NAME==i]
+  roll_i<-roll_i[,rollmean_zeta_mpth:=rollmean(roll_i$zeta_mpth,k = 7,fill = NA, align = 'right')]
+  aj_com_nb_sd_roll_mpth<-rbind(aj_com_nb_sd_roll_mpth,roll_i)
+}
+aj_com_nb_sd_roll_mpth
+
+
+#for ftwbd
+aj_com_nb_sd_roll_ftwbd <- data.table()
+for (i in unique(aj_com_nb_sd_ftwbd$CSA_NAME)){
+  roll_i<-aj_com_nb_sd_ftwbd[CSA_NAME==i]
+  roll_i<-roll_i[,rollmean_zeta_ftwbd:=rollmean(roll_i$zeta_ftwbd,k = 7,fill = NA, align = 'right')]
+  aj_com_nb_sd_roll_ftwbd<-rbind(aj_com_nb_sd_roll_ftwbd,roll_i)
+}
+aj_com_nb_sd_roll_ftwbd
+
+
+
+
+
+#for dtrh
+aj_com_nb_sd_roll_dtrh <- data.table()
+for (i in unique(aj_com_nb_sd_dtrh$CSA_NAME)){
+  roll_i<-aj_com_nb_sd_dtrh[CSA_NAME==i]
+  roll_i<-roll_i[,rollmean_zeta_dtrh:=rollmean(roll_i$zeta_dtrh,k = 7,fill = NA, align = 'right')]
+  aj_com_nb_sd_roll_dtrh<-rbind(aj_com_nb_sd_roll_dtrh,roll_i)
+}
+aj_com_nb_sd_roll_dtrh
+
+####
+###for covid-19 IR
+covidate_nb_dp
+setnames(covidate_nb_dp,'name','CSA_NAME')
+
+
+covidate_nb_dp_roll <- data.table()
+for (i in unique(covidate_nb_dp$CSA_NAME)){
+  roll_i<-covidate_nb_dp[CSA_NAME==i]
+  roll_i<-roll_i[,rollmean_crude_ir_dp:=rollmean(roll_i$crude_ir_dp,k = 7,fill = NA, align = 'right')]
+  covidate_nb_dp_roll<-rbind(covidate_nb_dp_roll,roll_i)
+}
+covidate_nb_dp_roll
+
+
+
+
+```
+
+
+
+##test
+test <-covidate_nb_dp_roll %>% 
+  mutate() %>% 
+  plot_ly(x = ~ date, y = ~ rollmean_crude_ir_dp, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "zeta_com_neighborhood'") 
+test
+
+
+
+write.csv(aj_com_nb_sd_roll,'aj_com_nb_sd_roll.csv',row.names = F)
+write.csv(aj_com_nb_sd_roll_mpth,'aj_com_nb_sd_roll_mpth.csv',row.names = F)
+write.csv(aj_com_nb_sd_roll_ftwbd,'aj_com_nb_sd_roll_ftwbd.csv',row.names = F)
+write.csv(aj_com_nb_sd_roll_dtrh,'aj_com_nb_sd_roll_dtrh.csv',row.names = F)
+write.csv(covidate_nb_dp_roll,'covidate_nb_dp_roll.csv',row.names = F)
+
+
+#矫正lagtime（M时间+i）
+1. chdc   ：lag = 3 ：-0.5172181 1.116375e-25
+
+2. mpth ：lag =7 ：-0.093560568 0.08004148
+
+3.ftwbd ：  lag=3 ：0.3300909 1.805015e-10
+
+4.dtrh  ： lag=17 ：-0.17277657 0.001360372
+```{R}
+#chdc： date+3  / 整理数据集
+
+aj_com_nb_sd_roll
+aj_com_nb_sd_roll_mpth
+aj_com_nb_sd_roll_ftwbd
+aj_com_nb_sd_roll_dtrh
+
+covidate_nb_dp_roll
+
+#准备：
+aj_com_nb_sd_roll<-aj_com_nb_sd_roll[start_date>='2020-03-08']
+aj_com_nb_sd_roll_mpth<-aj_com_nb_sd_roll_mpth[start_date>='2020-03-08']
+aj_com_nb_sd_roll_ftwbd<-aj_com_nb_sd_roll_ftwbd[start_date>='2020-03-08']
+aj_com_nb_sd_roll_dtrh<-aj_com_nb_sd_roll_dtrh[start_date>='2020-03-08']
+covidate_nb_dp_roll<-covidate_nb_dp_roll[date>='2020-03-22']
+
+
+aj_com_nb_sd_roll<-aj_com_nb_sd_roll[,.(CSA_NAME,start_date,rollmean_zeta_chdc)]
+aj_com_nb_sd_roll_mpth<-aj_com_nb_sd_roll_mpth[,.(CSA_NAME,start_date,rollmean_zeta_mpth)]
+aj_com_nb_sd_roll_ftwbd<-aj_com_nb_sd_roll_ftwbd[,.(CSA_NAME,start_date,rollmean_zeta_ftwbd)]
+aj_com_nb_sd_roll_dtrh<-aj_com_nb_sd_roll_dtrh[,.(CSA_NAME,start_date,rollmean_zeta_dtrh)]
+
+covidate_nb_dp_roll<-covidate_nb_dp_roll[,.(CSA_NAME,date,rollmean_crude_ir_dp)]
+setnames(covidate_nb_dp_roll,'date','start_date')
+covidate_nb_dp_roll<-covidate_nb_dp_roll[,start_date:=as.IDate(start_date)]
+
+
+##矫正前合并：
+com_ir_sd_nb_dp<-inner_join(covidate_nb_dp_roll,aj_com_nb_sd_roll,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp<-inner_join(com_ir_sd_nb_dp,aj_com_nb_sd_roll_mpth,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp<-inner_join(com_ir_sd_nb_dp,aj_com_nb_sd_roll_ftwbd,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp<-inner_join(com_ir_sd_nb_dp,aj_com_nb_sd_roll_dtrh,by=c('CSA_NAME','start_date'))
+
+#write.csv(com_ir_sd_nb_dp,'com_ir_sd_nb_dp.csv',row.names = F)
+
+com_ir_sd_nb_dp
+
+
+nb_rolling_zeta_com_chdc <-com_ir_sd_nb_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ rollmean_zeta_chdc, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling-mean_zeta_chdc_com_neighborhood'") 
+nb_rolling_zeta_com_chdc
+
+
+nb_rolling_zeta_com_mpth <-com_ir_sd_nb_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ rollmean_zeta_mpth, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling-mean_zeta_mpth_com_neighborhood'") 
+nb_rolling_zeta_com_mpth
+
+nb_rolling_zeta_com_ftwbd <-com_ir_sd_nb_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ rollmean_zeta_ftwbd, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling-mean_zeta_ftwbd_com_neighborhood'") 
+nb_rolling_zeta_com_ftwbd
+
+nb_rolling_zeta_com_dtrh <-com_ir_sd_nb_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ rollmean_zeta_dtrh, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling-mean_zeta_dtrh_com_neighborhood'") 
+nb_rolling_zeta_com_dtrh
+
+
+nb_rolling_zeta_com_crude_ir <-com_ir_sd_nb_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ rollmean_crude_ir_dp, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling-mean_zeta_crudeIR_com_neighborhood'") 
+nb_rolling_zeta_com_crude_ir
+```
+
+```{R}
+
+##################
+##矫正后合并：
+#chdc :  lag= 3    /   mpth ：lag =7 /    ftwbd ：  lag=3   /    dtrh  ： lag=17
+tail(aj_com_nb_sd_roll)
+aj_com_nb_sd_roll_lag<-aj_com_nb_sd_roll[,start_date:= start_date + 3]
+setnames(aj_com_nb_sd_roll_lag,'rollmean_zeta_chdc','lag+3_rollmean_zeta_chdc')
+
+#mpth
+aj_com_nb_sd_roll_lag_mpth<-aj_com_nb_sd_roll_mpth[,start_date:= start_date + 7]
+setnames(aj_com_nb_sd_roll_lag_mpth,'rollmean_zeta_mpth','lag+7_rollmean_zeta_mpth')
+
+#ftwbd
+aj_com_nb_sd_roll_lag_ftwbd<-aj_com_nb_sd_roll_ftwbd[,start_date:= start_date + 3]
+setnames(aj_com_nb_sd_roll_lag_ftwbd,'rollmean_zeta_ftwbd','lag+3_rollmean_zeta_ftwbd')
+
+#dtrh
+aj_com_nb_sd_roll_lag_dtrh<-aj_com_nb_sd_roll_dtrh[,start_date:= start_date + 17]
+setnames(aj_com_nb_sd_roll_lag_dtrh,'rollmean_zeta_dtrh','lag+17_rollmean_zeta_dtrh')
+
+
+com_ir_sd_nb_dp_lag<-inner_join(covidate_nb_dp_roll,aj_com_nb_sd_roll_lag,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp_lag<-inner_join(com_ir_sd_nb_dp_lag,aj_com_nb_sd_roll_lag_mpth,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp_lag<-inner_join(com_ir_sd_nb_dp_lag,aj_com_nb_sd_roll_lag_ftwbd,by=c('CSA_NAME','start_date'))
+com_ir_sd_nb_dp_lag<-inner_join(com_ir_sd_nb_dp_lag,aj_com_nb_sd_roll_lag_dtrh,by=c('CSA_NAME','start_date'))
+
+com_ir_sd_nb_dp_lag
+
+
+tail(com_ir_sd_nb_dp_lag)
+#write.csv(com_ir_sd_nb_dp_lag,'com_ir_sd_nb_dp_lag.csv',row.names = F)
+```
+*demo：*
+Regarding (3): I don’t quite understand what you’re suggesting here. You should keep it simple (you have 1 week to get a complete draft of your thesis to your committee!) and focus on a couple census variables (I can suggest some notable ones) to correlate with the mobility variables, at different time points.
+3:09
+As an example of what you should focus on for part (3), see the first 3 figures here: https://stanfordfuturebay.github.io/sanjose_correlation
+
+Abigail Horn (USC)  3:29 PM
+Important census variable to include in step 3 is % multigenerational households (B11017_002 — Estimate!!Total!!Multigenerational households) and % households with 5 or more people
+
+
+
+*正式制作需要table*
+
+# 1. 加入 time period ：I II III
+
+*Mach 1- May 6* :I    3—5月    ---- 4月/5月
+
+*May 7* -end of July--*October 14*  II  5-10月   ---7月--10月
+
+*October 15* -mid-Jan,2021 -*March 1, 2021*   III  10—次年3月---2月
+```{R}
+
+com_ir_sd_nb_dp_lag 
+```
+
+
+```{R}
+
+test<-com_ir_sd_nb_dp_lag
+
+com_ir_sd_nb_dp_lag<-com_ir_sd_nb_dp_lag[start_date <='2020-05-06	',period:= 'I']
+com_ir_sd_nb_dp_lag<-com_ir_sd_nb_dp_lag[start_date >='2020-05-07	' & start_date <='2020-10-14'  ,period:= 'II']
+com_ir_sd_nb_dp_lag<-com_ir_sd_nb_dp_lag[start_date >='2020-10-14	' & start_date <='2021-03-01' ,period:= 'III']
+
+com_ir_sd_nb_dp_lag
+
+```
+
+# 开始分析table：
+
+1. 设计table 和 图片： within period I、II、III比较：
+```{R}
+#within period I、II、III比较 M和IR的相关性
+
+com_ir_sd_nb_dp_lag
+#做corr——table：
+
+com_ir_sd_nb_dp_lag_I<-com_ir_sd_nb_dp_lag[period=='I']
+com_ir_sd_nb_dp_lag_II<-com_ir_sd_nb_dp_lag[period=='II']
+com_ir_sd_nb_dp_lag_III<-com_ir_sd_nb_dp_lag[period=='III']
+
+
+```
+#A = within period
+
+*1. period x Corr*
+# A,table+plot 1:
+```{R}
+##corr matrix
+# I 
+##是否要删去不显著的点？？？----要，我觉得！
+
+cor_ir_chdc_nb_I<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_I$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_I[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_chdc`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_chdc_nb_I<-rbind(cor_ir_chdc_nb_I,l)
+}
+
+names(cor_ir_chdc_nb_I)<-c('CSA_NAME','chdc_R','chdc_P')
+cor_ir_chdc_nb_I
+
+#只保留P<0.05
+cor_ir_chdc_nb_I<-cor_ir_chdc_nb_I[chdc_P<0.05]
+cor_ir_chdc_nb_I<-cor_ir_chdc_nb_I[,period:='I']
+
+
+#II
+cor_ir_chdc_nb_II<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_II$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_II[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_chdc`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_chdc_nb_II<-rbind(cor_ir_chdc_nb_II,l)
+}
+
+names(cor_ir_chdc_nb_II)<-c('CSA_NAME','chdc_R','chdc_P')
+cor_ir_chdc_nb_II
+
+#只保留P<0.05
+cor_ir_chdc_nb_II<-cor_ir_chdc_nb_II[chdc_P<0.05]
+cor_ir_chdc_nb_II<-cor_ir_chdc_nb_II[,period:='II']
+
+
+#III
+
+cor_ir_chdc_nb_III<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_III$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_III[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_chdc`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_chdc_nb_III<-rbind(cor_ir_chdc_nb_III,l)
+}
+
+names(cor_ir_chdc_nb_III)<-c('CSA_NAME','chdc_R','chdc_P')
+cor_ir_chdc_nb_III
+
+#只保留P<0.05
+cor_ir_chdc_nb_III<-cor_ir_chdc_nb_III[chdc_P<0.05]
+cor_ir_chdc_nb_III<-cor_ir_chdc_nb_III[,period:='III']
+
+#table
+cor_ir_chdc_nb_com<-rbind(cor_ir_chdc_nb_I,cor_ir_chdc_nb_II)
+cor_ir_chdc_nb_com<-rbind(cor_ir_chdc_nb_com,cor_ir_chdc_nb_III)
+cor_ir_chdc_nb_com
+
+##plot for chdc:
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+
+cor_ir_chdc_nb_com %>%
+  ggplot( aes(x=period, y=chdc_R, fill=period)) +
+    geom_violin(width=1.4) +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("correlation between chdc and IR within 3 period in Neighborhoods (P<0.05)") +
+    xlab("")
+
+```
+
+
+```{R}
+
+cor_ir_mpth_nb_I<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_I$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_I[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+7_rollmean_zeta_mpth`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_mpth_nb_I<-rbind(cor_ir_mpth_nb_I,l)
+}
+
+names(cor_ir_mpth_nb_I)<-c('CSA_NAME','mpth_R','mpth_P')
+cor_ir_mpth_nb_I
+
+#只保留P<0.05
+cor_ir_mpth_nb_I<-cor_ir_mpth_nb_I[mpth_P<0.05]
+cor_ir_mpth_nb_I<-cor_ir_mpth_nb_I[,period:='I']
+
+
+#II
+cor_ir_mpth_nb_II<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_II$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_II[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+7_rollmean_zeta_mpth`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_mpth_nb_II<-rbind(cor_ir_mpth_nb_II,l)
+}
+
+names(cor_ir_mpth_nb_II)<-c('CSA_NAME','mpth_R','mpth_P')
+cor_ir_mpth_nb_II
+
+#只保留P<0.05
+cor_ir_mpth_nb_II<-cor_ir_mpth_nb_II[mpth_P<0.05]
+cor_ir_mpth_nb_II<-cor_ir_mpth_nb_II[,period:='II']
+
+
+#III
+
+cor_ir_mpth_nb_III<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_III$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_III[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+7_rollmean_zeta_mpth`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_mpth_nb_III<-rbind(cor_ir_mpth_nb_III,l)
+}
+
+names(cor_ir_mpth_nb_III)<-c('CSA_NAME','mpth_R','mpth_P')
+cor_ir_mpth_nb_III
+
+#只保留P<0.05
+cor_ir_mpth_nb_III<-cor_ir_mpth_nb_III[mpth_P<0.05]
+cor_ir_mpth_nb_III<-cor_ir_mpth_nb_III[,period:='III']
+
+#table
+cor_ir_mpth_nb_com<-rbind(cor_ir_mpth_nb_I,cor_ir_mpth_nb_II)
+cor_ir_mpth_nb_com<-rbind(cor_ir_mpth_nb_com,cor_ir_mpth_nb_III)
+cor_ir_mpth_nb_com
+
+##plot for mpth:
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+
+cor_ir_mpth_nb_com %>%
+  ggplot( aes(x=period, y=mpth_R, fill=period)) +
+    geom_violin(width=1.4) +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("correlation between mpth and IR within 3 period in Neighborhoods (P<0.05)") +
+    xlab("")
+```
+```{R}
+
+
+cor_ir_ftwbd_nb_I<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_I$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_I[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_ftwbd`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_ftwbd_nb_I<-rbind(cor_ir_ftwbd_nb_I,l)
+}
+
+names(cor_ir_ftwbd_nb_I)<-c('CSA_NAME','ftwbd_R','ftwbd_P')
+cor_ir_ftwbd_nb_I
+
+#只保留P<0.05
+cor_ir_ftwbd_nb_I<-cor_ir_ftwbd_nb_I[ftwbd_P<0.05]
+cor_ir_ftwbd_nb_I<-cor_ir_ftwbd_nb_I[,period:='I']
+
+
+#II
+cor_ir_ftwbd_nb_II<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_II$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_II[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_ftwbd`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_ftwbd_nb_II<-rbind(cor_ir_ftwbd_nb_II,l)
+}
+
+names(cor_ir_ftwbd_nb_II)<-c('CSA_NAME','ftwbd_R','ftwbd_P')
+cor_ir_ftwbd_nb_II
+
+#只保留P<0.05
+cor_ir_ftwbd_nb_II<-cor_ir_ftwbd_nb_II[ftwbd_P<0.05]
+cor_ir_ftwbd_nb_II<-cor_ir_ftwbd_nb_II[,period:='II']
+
+
+#III
+
+cor_ir_ftwbd_nb_III<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_III$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_III[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+3_rollmean_zeta_ftwbd`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_ftwbd_nb_III<-rbind(cor_ir_ftwbd_nb_III,l)
+}
+
+names(cor_ir_ftwbd_nb_III)<-c('CSA_NAME','ftwbd_R','ftwbd_P')
+cor_ir_ftwbd_nb_III
+
+#只保留P<0.05
+cor_ir_ftwbd_nb_III<-cor_ir_ftwbd_nb_III[ftwbd_P<0.05]
+cor_ir_ftwbd_nb_III<-cor_ir_ftwbd_nb_III[,period:='III']
+
+#table
+cor_ir_ftwbd_nb_com<-rbind(cor_ir_ftwbd_nb_I,cor_ir_ftwbd_nb_II)
+cor_ir_ftwbd_nb_com<-rbind(cor_ir_ftwbd_nb_com,cor_ir_ftwbd_nb_III)
+cor_ir_ftwbd_nb_com
+
+
+cor_ir_ftwbd_nb_com %>%
+  ggplot( aes(x=period, y=ftwbd_R, fill=period)) +
+    geom_violin(width=1.4) +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("correlation between ftwbd and IR within 3 period in Neighborhoods (P<0.05)") +
+    xlab("")
+
+
+```
+
+```{R}
+
+cor_ir_dtrh_nb_I<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_I$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_I[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+17_rollmean_zeta_dtrh`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_dtrh_nb_I<-rbind(cor_ir_dtrh_nb_I,l)
+}
+
+names(cor_ir_dtrh_nb_I)<-c('CSA_NAME','dtrh_R','dtrh_P')
+cor_ir_dtrh_nb_I
+
+#只保留P<0.05
+cor_ir_dtrh_nb_I<-cor_ir_dtrh_nb_I[dtrh_P<0.05]
+cor_ir_dtrh_nb_I<-cor_ir_dtrh_nb_I[,period:='I']
+
+
+#II
+cor_ir_dtrh_nb_II<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_II$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_II[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+17_rollmean_zeta_dtrh`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_dtrh_nb_II<-rbind(cor_ir_dtrh_nb_II,l)
+}
+
+names(cor_ir_dtrh_nb_II)<-c('CSA_NAME','dtrh_R','dtrh_P')
+cor_ir_dtrh_nb_II
+
+#只保留P<0.05
+cor_ir_dtrh_nb_II<-cor_ir_dtrh_nb_II[dtrh_P<0.05]
+cor_ir_dtrh_nb_II<-cor_ir_dtrh_nb_II[,period:='II']
+
+
+#III
+
+cor_ir_dtrh_nb_III<-data.table()
+for (i in unique(com_ir_sd_nb_dp_lag_III$CSA_NAME)) {
+  cor_i<-com_ir_sd_nb_dp_lag_III[CSA_NAME==i]
+  cor_i<-cor.test(cor_i$`lag+17_rollmean_zeta_dtrh`,cor_i$rollmean_crude_ir_dp)
+  l<-data.table(i,cor_i$estimate,cor_i$p.value)
+  cor_ir_dtrh_nb_III<-rbind(cor_ir_dtrh_nb_III,l)
+}
+
+names(cor_ir_dtrh_nb_III)<-c('CSA_NAME','dtrh_R','dtrh_P')
+cor_ir_dtrh_nb_III
+
+#只保留P<0.05
+cor_ir_dtrh_nb_III<-cor_ir_dtrh_nb_III[dtrh_P<0.05]
+cor_ir_dtrh_nb_III<-cor_ir_dtrh_nb_III[,period:='III']
+
+#table
+cor_ir_dtrh_nb_com<-rbind(cor_ir_dtrh_nb_I,cor_ir_dtrh_nb_II)
+cor_ir_dtrh_nb_com<-rbind(cor_ir_dtrh_nb_com,cor_ir_dtrh_nb_III)
+cor_ir_dtrh_nb_com
+
+##plot for dtrh:
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+
+cor_ir_dtrh_nb_com %>% 
+  ggplot( aes(x=period, y=dtrh_R, fill=period)) +
+    geom_violin(width=1.4) +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("correlation between dtrh and IR within 3 period in Neighborhoods (P<0.05)") +
+    xlab("")
+
+
+
+```
+# dots 图  ==*3. Corr x NB x period*
+```{R}
+
+cor_ir_chdc_nb_com
+cor_ir_mpth_nb_com
+cor_ir_ftwbd_nb_com
+cor_ir_dtrh_nb_com
+
+
+##for chdc
+#I
+
+map_I_chdc<-cor_ir_chdc_nb_com[period=='I']
+map_I_chdc<-map_I_chdc[,.(CSA_NAME,chdc_R)]
+setnames(map_I_chdc,'CSA_NAME','LABEL')
+map_I_chdc<-as.data.frame(map_I_chdc)
+#map_nb_wp3
+chdc_I<-inner_join(CSA_NB,map_I_chdc)
+
+#
+chdc_I %>% 
+  mapview(zcol = "chdc_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1), legend = TRUE
+          ,layer.name = "chdc_I") 
+
+#chdc_II
+
+
+map_II_chdc<-cor_ir_chdc_nb_com[period=='II']
+map_II_chdc<-map_II_chdc[,.(CSA_NAME,chdc_R)]
+setnames(map_II_chdc,'CSA_NAME','LABEL')
+map_II_chdc<-as.data.frame(map_II_chdc)
+#map_nb_wp3
+chdc_II<-inner_join(CSA_NB,map_II_chdc)
+
+#
+chdc_II %>% 
+  mapview(zcol = "chdc_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "chdc_II") 
+
+
+
+#chdc_III
+
+
+map_III_chdc<-cor_ir_chdc_nb_com[period=='III']
+map_III_chdc<-map_III_chdc[,.(CSA_NAME,chdc_R)]
+setnames(map_III_chdc,'CSA_NAME','LABEL')
+map_III_chdc<-as.data.frame(map_III_chdc)
+#map_nb_wp3
+chdc_III<-inner_join(CSA_NB,map_III_chdc)
+
+#
+chdc_III %>% 
+  mapview(zcol = "chdc_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "chdc_III") 
+
+```
+
+
+
+
+```{R}
+#for mpth
+
+##for mpth
+#I
+
+map_I_mpth<-cor_ir_mpth_nb_com[period=='I']
+map_I_mpth<-map_I_mpth[,.(CSA_NAME,mpth_R)]
+setnames(map_I_mpth,'CSA_NAME','LABEL')
+map_I_mpth<-as.data.frame(map_I_mpth)
+#map_nb_wp3
+mpth_I<-inner_join(CSA_NB,map_I_mpth)
+
+#
+mpth_I %>% 
+  mapview(zcol = "mpth_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1), legend = TRUE
+          ,layer.name = "mpth_I") 
+
+#mpth_II
+
+
+map_II_mpth<-cor_ir_mpth_nb_com[period=='II']
+map_II_mpth<-map_II_mpth[,.(CSA_NAME,mpth_R)]
+setnames(map_II_mpth,'CSA_NAME','LABEL')
+map_II_mpth<-as.data.frame(map_II_mpth)
+#map_nb_wp3
+mpth_II<-inner_join(CSA_NB,map_II_mpth)
+
+#
+mpth_II %>% 
+  mapview(zcol = "mpth_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "mpth_II") 
+
+
+
+#mpth_III
+
+
+map_III_mpth<-cor_ir_mpth_nb_com[period=='III']
+map_III_mpth<-map_III_mpth[,.(CSA_NAME,mpth_R)]
+setnames(map_III_mpth,'CSA_NAME','LABEL')
+map_III_mpth<-as.data.frame(map_III_mpth)
+#map_nb_wp3
+mpth_III<-inner_join(CSA_NB,map_III_mpth)
+
+#
+mpth_III %>% 
+  mapview(zcol = "mpth_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "mpth_III") 
+
+
+
+
+
+```
+
+
+
+```{R}
+
+##for ftwbd
+#I
+
+map_I_ftwbd<-cor_ir_ftwbd_nb_com[period=='I']
+map_I_ftwbd<-map_I_ftwbd[,.(CSA_NAME,ftwbd_R)]
+setnames(map_I_ftwbd,'CSA_NAME','LABEL')
+map_I_ftwbd<-as.data.frame(map_I_ftwbd)
+#map_nb_wp3
+ftwbd_I<-inner_join(CSA_NB,map_I_ftwbd)
+
+#
+ftwbd_I %>% 
+  mapview(zcol = "ftwbd_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1), legend = TRUE
+          ,layer.name = "ftwbd_I") 
+
+#ftwbd_II
+
+
+map_II_ftwbd<-cor_ir_ftwbd_nb_com[period=='II']
+map_II_ftwbd<-map_II_ftwbd[,.(CSA_NAME,ftwbd_R)]
+setnames(map_II_ftwbd,'CSA_NAME','LABEL')
+map_II_ftwbd<-as.data.frame(map_II_ftwbd)
+#map_nb_wp3
+ftwbd_II<-inner_join(CSA_NB,map_II_ftwbd)
+
+#
+ftwbd_II %>% 
+  mapview(zcol = "ftwbd_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "ftwbd_II") 
+
+
+
+#ftwbd_III
+
+
+map_III_ftwbd<-cor_ir_ftwbd_nb_com[period=='III']
+map_III_ftwbd<-map_III_ftwbd[,.(CSA_NAME,ftwbd_R)]
+setnames(map_III_ftwbd,'CSA_NAME','LABEL')
+map_III_ftwbd<-as.data.frame(map_III_ftwbd)
+#map_nb_wp3
+ftwbd_III<-inner_join(CSA_NB,map_III_ftwbd)
+
+#
+ftwbd_III %>% 
+  mapview(zcol = "ftwbd_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "ftwbd_III") 
+
+
+
+
+
+```
+
+
+
+```{R}
+
+##for dtrh
+#I
+
+map_I_dtrh<-cor_ir_dtrh_nb_com[period=='I']
+map_I_dtrh<-map_I_dtrh[,.(CSA_NAME,dtrh_R)]
+setnames(map_I_dtrh,'CSA_NAME','LABEL')
+map_I_dtrh<-as.data.frame(map_I_dtrh)
+#map_nb_wp3
+dtrh_I<-inner_join(CSA_NB,map_I_dtrh)
+
+#
+dtrh_I %>% 
+  mapview(zcol = "dtrh_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1), legend = TRUE
+          ,layer.name = "dtrh_I") 
+
+#dtrh_II
+
+
+map_II_dtrh<-cor_ir_dtrh_nb_com[period=='II']
+map_II_dtrh<-map_II_dtrh[,.(CSA_NAME,dtrh_R)]
+setnames(map_II_dtrh,'CSA_NAME','LABEL')
+map_II_dtrh<-as.data.frame(map_II_dtrh)
+#map_nb_wp3
+dtrh_II<-inner_join(CSA_NB,map_II_dtrh)
+
+#
+dtrh_II %>% 
+  mapview(zcol = "dtrh_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "dtrh_II") 
+
+
+
+#dtrh_III
+
+
+map_III_dtrh<-cor_ir_dtrh_nb_com[period=='III']
+map_III_dtrh<-map_III_dtrh[,.(CSA_NAME,dtrh_R)]
+setnames(map_III_dtrh,'CSA_NAME','LABEL')
+map_III_dtrh<-as.data.frame(map_III_dtrh)
+#map_nb_wp3
+dtrh_III<-inner_join(CSA_NB,map_III_dtrh)
+
+#
+dtrh_III %>% 
+  mapview(zcol = "dtrh_R",at = c(-1,-0.6,-0.3,0,0.3,0.6,1),  legend = TRUE
+          ,layer.name = "dtrh_III") 
+
+
+
+
+
+```
+
+
+
+
+
+
+*2. Corr x NB *
+2.整体 within NB来看。。。/ 在同一period 内within NB看
+```{R}
+
+
+cor_ir_chdc_nb_com
+cor_ir_mpth_nb_com
+cor_ir_ftwbd_nb_com
+cor_ir_dtrh_nb_com
+
+
+```
+
+
+
+
+*3. Corr x NB x period*
+
+
+
+
+
+
+
+
+
+*DEMO*
+
+```{R}
+
+
+
+```
+
+
+
+
+
+

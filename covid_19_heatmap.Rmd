@@ -1,0 +1,419 @@
+---
+title: "covid_19_mobility_analysis_HeatMap 1"
+author: "Tao Huang & Dr.Abigail Horn"
+date: "4/13/2021"
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(patchwork)
+library(sf)
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = FALSE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+# 1.Covid-19 Crude IR  v.s. Mobility data - Completely Home Device Count(CHDS)  
+
+```{R}
+districts <- st_read("/Users/huangtao/Desktop/covid_19_keck_Research/NB_mapping/shapefiles/7-la-county-neighborhoods/l.a. county neighborhood (current).shp")
+
+#data 
+covidate<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/covidate.csv')
+
+aj_com_nb_sd_wow_wp_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/aj_com_nb_sd_wow_wp_s.csv')
+
+```
+```{R}
+#covid
+
+#march, no real first week.---  '2020-03-21'
+covidate_03<-covidate[date=='2020-03-21']
+covidate_03<-covidate_03[,.(name,crude_ir_week)]
+covidate_03<-as.data.frame(covidate_03)
+map_covidate_03<-inner_join(districts,covidate_03)
+
+#04, no real first week.---  '2020-03-21'
+covidate_04<-covidate[date=='2020-04-04']
+covidate_04<-covidate_04[,.(name,crude_ir_week)]
+covidate_04<-as.data.frame(covidate_04)
+map_covidate_04<-inner_join(districts,covidate_04)
+
+#05, no real first week.---  '2020-03-21'
+covidate_05<-covidate[date=='2020-05-02']
+covidate_05<-covidate_05[,.(name,crude_ir_week)]
+covidate_05<-as.data.frame(covidate_05)
+map_covidate_05<-inner_join(districts,covidate_05)
+
+
+#07, no real first week.---  '2020-03-21'
+covidate_07<-covidate[date=='2020-07-04']
+covidate_07<-covidate_07[,.(name,crude_ir_week)]
+covidate_07<-as.data.frame(covidate_07)
+map_covidate_07<-inner_join(districts,covidate_07)
+
+
+#09, no real first week.---  '2020-03-21'
+covidate_09<-covidate[date=='2020-09-05']
+covidate_09<-covidate_09[,.(name,crude_ir_week)]
+covidate_09<-as.data.frame(covidate_09)
+map_covidate_09<-inner_join(districts,covidate_09)
+
+
+#11, no real first week.---  '2020-03-21'
+covidate_11<-covidate[date=='2020-11-07']
+covidate_11<-covidate_11[,.(name,crude_ir_week)]
+covidate_11<-as.data.frame(covidate_11)
+map_covidate_11<-inner_join(districts,covidate_11)
+
+
+#13, no real first week.---  '2020-03-21'
+covidate_13<-covidate[date=='2020-12-26']
+covidate_13<-covidate_13[,.(name,crude_ir_week)]
+covidate_13<-as.data.frame(covidate_13)
+map_covidate_13<-inner_join(districts,covidate_13)
+
+
+#14, no real first week.---  '2020-03-21'
+covidate_14<-covidate[date=='2021-02-06']
+covidate_14<-covidate_14[,.(name,crude_ir_week)]
+covidate_14<-as.data.frame(covidate_14)
+map_covidate_14<-inner_join(districts,covidate_14)
+
+#covidate[date=='2021-01-02']###why is negative??
+```
+
+
+
+## 1.1Covid-19 Crude IR--heatmap
+
+```{R}
+
+cm3 <- map_covidate_03 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm4 <- map_covidate_04 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm5 <- map_covidate_05 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm7 <- map_covidate_07 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm9 <- map_covidate_09 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm11 <- map_covidate_11 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm13 <- map_covidate_13 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+cm14 <- map_covidate_14 %>% 
+  ggplot(aes(fill = crude_ir_week)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+```
+
+### 2020-03 to 2020-05 & 2020-07
+```{R}
+cm3 + cm4 + cm5 + cm7 + 
+  plot_layout(guides = "collect") 
+```
+
+### 2020-09 & 2020-11 & 2021-01 & 2021-02
+```{R}
+cm9+ cm11+ cm13+ cm14 +
+  plot_layout(guides = "collect") 
+
+```
+
+------
+
+## 1.2 Mobility data - Completely Home Device Count(CHDS)--heatmap(from 2020-03 to 2021-02)
+```{R}
+
+#nb_wp3
+#aj_com_nb_sd_wow_wp
+nb_wp3<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-03-07']
+nb_wp3<-nb_wp3[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp3,'NEIGHBORHOOD_NAME','name')
+nb_wp3<-as.data.frame(nb_wp3)
+#map_nb_wp3
+map_nb_wp3<-inner_join(districts,nb_wp3)
+
+
+#nb_wp4
+nb_wp4<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-04-04']
+nb_wp4<-nb_wp4[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp4,'NEIGHBORHOOD_NAME','name')
+nb_wp4<-as.data.frame(nb_wp4)
+#map_nb_wp4
+map_nb_wp4<-inner_join(districts,nb_wp4)
+
+
+#nb_wp5
+nb_wp5<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-05-02']
+nb_wp5<-nb_wp5[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp5,'NEIGHBORHOOD_NAME','name')
+nb_wp5<-as.data.frame(nb_wp5)
+#map_nb_wp4
+map_nb_wp5<-inner_join(districts,nb_wp5)
+
+
+
+
+#nb_wp7
+nb_wp7<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-07-04']
+nb_wp7<-nb_wp7[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp7,'NEIGHBORHOOD_NAME','name')
+nb_wp7<-as.data.frame(nb_wp7)
+#map_nb_wp4
+map_nb_wp7<-inner_join(districts,nb_wp7)
+
+
+
+
+#nb_wp9
+nb_wp9<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-09-05']
+nb_wp9<-nb_wp9[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp9,'NEIGHBORHOOD_NAME','name')
+nb_wp9<-as.data.frame(nb_wp9)
+#map_nb_wp4
+map_nb_wp9<-inner_join(districts,nb_wp9)
+
+
+
+#nb_wp11
+nb_wp11<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2020-11-07']
+nb_wp11<-nb_wp11[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp11,'NEIGHBORHOOD_NAME','name')
+nb_wp11<-as.data.frame(nb_wp11)
+#map_nb_wp4
+map_nb_wp11<-inner_join(districts,nb_wp11)
+
+
+
+
+#nb_wp13
+nb_wp13<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2021-01-02']
+nb_wp13<-nb_wp13[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp13,'NEIGHBORHOOD_NAME','name')
+nb_wp13<-as.data.frame(nb_wp13)
+#map_nb_wp4
+map_nb_wp13<-inner_join(districts,nb_wp13)
+
+#nb_wp14
+nb_wp14<-aj_com_nb_sd_wow_wp_s[start_date.x.x=='2021-02-06']
+nb_wp14<-nb_wp14[,.(NEIGHBORHOOD_NAME,zeta_achdc_w)]
+setnames(nb_wp14,'NEIGHBORHOOD_NAME','name')
+nb_wp14<-as.data.frame(nb_wp14)
+#map_nb_wp4
+map_nb_wp14<-inner_join(districts,nb_wp14)
+
+```
+
+```{R}
+m3 <- map_nb_wp3 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m4 <- map_nb_wp4 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m5 <- map_nb_wp5 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m7 <- map_nb_wp7 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m9 <- map_nb_wp9 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m11 <- map_nb_wp11 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m13 <- map_nb_wp13 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+m14 <- map_nb_wp14 %>% 
+  ggplot(aes(fill = zeta_achdc_w)) +
+  geom_sf(color = NA) +
+  coord_sf(crs = 26911) +
+  scale_fill_viridis_c(option = "magma")
+
+```
+
+### 2020-03 & 2020-04 & 2020-05 & 2020-07
+```{R}
+m3 + m4 + m5+ m7+
+  plot_layout(guides = "collect")
+```
+
+### 2020-09 & 2020-11 & 2021-01 & 2021-02
+```{R}
+m9+ m11+ m13+ m14
+  plot_layout(guides = "collect")
+
+```
+
+----
+
+# 2.Covid-19 Crude-IR detailed heatmap
+
+
+```{R}
+#03\04\05\07
+
+map_covidate_03 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-03_Crude_IR") 
+
+map_covidate_04 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-04_Crude_IR") 
+
+map_covidate_05 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-05_Crude_IR") 
+
+map_covidate_07 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-07_Crude_IR") 
+
+
+
+```
+
+
+```{R}
+map_covidate_09 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-09_Crude_IR") 
+
+map_covidate_11 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2020-11_Crude_IR") 
+
+map_covidate_13 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2021-01_Crude_IR") 
+
+map_covidate_14 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,200,400,600,800,1000,2000,3000,10000),  legend = TRUE,layer.name = "2021-02_Crude_IR") 
+
+
+
+
+```
+
+------
+
+# 3.CHDC detailed heatmap
+
+### LA county levels 
+```{R}
+aj_com_lac_sd_wow_wp_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/aj_com_lac_sd_wow_wp_s.csv')
+lac_zeta_com_wp <-aj_com_lac_sd_wow_wp_s %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_achdc_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: zeta of adjusted 'completely_home_device_count'")
+lac_zeta_com_wp
+```
+
+```{R}
+#MAP 
+map_nb_wp3 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10),  legend = TRUE
+          ,layer.name = "2020-03_Zeta_CHDC") 
+map_nb_wp4 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10), legend = TRUE
+          ,layer.name = "2020-04_Zeta_CHDC") 
+map_nb_wp5 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10), legend = TRUE
+          ,layer.name = "2020-05_Zeta_CHDC") 
+
+map_nb_wp7 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10),  legend = TRUE
+          ,layer.name = "2020-07_Zeta_CHDC") 
+
+```
+
+```{R}
+#MAP 
+
+map_nb_wp9 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10),  legend = TRUE
+          ,layer.name = "2020-09_Zeta_CHDC") 
+
+map_nb_wp11 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10),  legend = TRUE
+          ,layer.name = "2020-11_Zeta_CHDC") 
+
+
+map_nb_wp13 %>% 
+  mapview(zcol = "zeta_achdc_w", at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10), legend = TRUE
+          ,layer.name = "2021-01_Zeta_CHDC") 
+
+
+map_nb_wp14 %>% 
+  mapview(zcol = "zeta_achdc_w", at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,10), legend = TRUE
+          ,layer.name = "2021-02_Zeta_CHDC") 
+
+```
+
+

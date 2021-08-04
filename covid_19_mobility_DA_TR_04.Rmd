@@ -1,0 +1,306 @@
+---
+title: "covid_19_mobility_DA_TR_04"
+author: "Tao Huang"
+date: "4/30/2021"
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(tidycensus)
+library(sf)
+library(ggplot2)
+library(zoo)
+
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+# 1.%change--Tract
+```{R}
+#for v0
+v0_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+v1_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+#for removing rural TR
+rural_tr<-read.csv('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/ERS_LAC_Urban_FE.csv')
+rural_tr<-as.data.table(rural_tr)
+rural_tr<-rural_tr[Urban==0]
+rural_tr<-rural_tr$CensusTract
+rural_tr<-as.vector(rural_tr)
+
+
+v0_la_sd_after01<-v0_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+v1_la_sd_after01<-v1_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+
+v0_la_sd_after01<-as.data.table(v0_la_sd_after01)
+v1_la_sd_after01<-as.data.table(v1_la_sd_after01)
+
+
+
+v0_tr_sd<-v0_la_sd_after01[,GEOID_NEW:=as.character(substring(v0_la_sd_after01$origin_census_block_group,1,10))]
+v1_tr_sd<-v1_la_sd_after01[,GEOID_NEW:=as.character(substring(v1_la_sd_after01$origin_census_block_group,1,10))]
+
+
+```
+
+
+
+```{R}
+aj_v0_tr_sd<-v0_tr_sd[,sum(completely_home_device_count)/sum(device_count),by=.(GEOID_NEW,which_week)]
+
+date_v0_tr<-v0_tr_sd[,.(which_week,week,start_date)]
+date_v0_tr<-unique(date_v0_tr[week == 'Saturday'])
+
+aj_v0_tr_sd_wp<-inner_join(aj_v0_tr_sd,date_v0_tr, by='which_week',all.x=T)
+
+
+
+
+#v1
+aj_v1_tr_sd<-v1_tr_sd[,sum(completely_home_device_count)/sum(device_count),by=.(GEOID_NEW,which_week)]
+
+date_v1_tr<-v1_tr_sd[,.(which_week,week,start_date)]
+date_v1_tr<-unique(date_v1_tr[week == 'Saturday'])
+
+aj_v1_tr_sd_wp<-inner_join(aj_v1_tr_sd,date_v1_tr, by='which_week',all.x=T)
+
+
+```
+
+*set zeta*
+```{R}
+#set baseline
+aj_v0_tr_sd_wp_base<-aj_v0_tr_sd_wp[start_date=='2020-03-07']
+setnames(aj_v0_tr_sd_wp_base,'V1', 'V1_base' )
+#merge
+aj_v0_tr_sd_wp<-inner_join(aj_v0_tr_sd_wp,aj_v0_tr_sd_wp_base, by = 'GEOID_NEW',all.x=T)
+aj_v0_tr_sd_wp<-as.data.table(aj_v0_tr_sd_wp)
+
+#set zeta
+aj_v0_tr_sd_wp[,zeta_achdc_w:=V1 / V1_base]
+
+
+
+#for v1
+##merge
+aj_v1_tr_sd_wp<-inner_join(aj_v1_tr_sd_wp,aj_v0_tr_sd_wp_base, by='GEOID_NEW',all.x=T)
+
+#set zeta
+aj_v1_tr_sd_wp<-as.data.table(aj_v1_tr_sd_wp)
+aj_v1_tr_sd_wp[,zeta_achdc_w:=V1 / V1_base]
+```
+
+*combine and plot*
+
+```{R}
+
+aj_com_tr_sd_wp<-rbind(aj_v0_tr_sd_wp,aj_v1_tr_sd_wp)
+#set wow
+aj_com_tr_sd_wp<-aj_com_tr_sd_wp[order(GEOID_NEW,start_date.x)]
+
+#remove rural:
+aj_com_tr_sd_wp<-aj_com_tr_sd_wp[!(GEOID_NEW %in% rural_tr)]
+
+
+tr_zeta_com_wp <-aj_com_tr_sd_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_achdc_w, color = ~ factor(GEOID_NEW),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_TR: zeta of adjusted 'completely_home_device_count'")
+
+#write.csv(aj_com_tr_sd_wp,'aj_com_tr_sd_wp.csv',row.names = F)
+
+#tr_zeta_com_wp    ----so large ,cannot plot it easily.
+
+```
+
+
+
+
+
+
+
+
+# 2.Tract - mapping
+
+```{R}
+
+CSA<-readRDS('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/CSA_crosswalk.rds')
+
+CSA$CSA_NAME<-gsub('[U]nincorporated - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('City of ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Los Angeles - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Silverlake','Silver Lake',CSA$CSA_NAME)
+
+
+
+```
+
+
+
+
+```{R}
+#tr_wp3
+tr_wp3<-aj_com_tr_sd_wp[start_date.x=='2020-03-07']
+tr_wp3<-tr_wp3[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp3<-as.data.frame(tr_wp3)
+#map_nb_wp3
+map_tr_wp3<-inner_join(CSA,tr_wp3)
+
+
+
+
+#tr_wp4
+tr_wp4<-aj_com_tr_sd_wp[start_date.x=='2020-04-04']
+tr_wp4<-tr_wp4[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp4<-as.data.frame(tr_wp4)
+#map_nb_wp4
+map_tr_wp4<-inner_join(CSA,tr_wp4)
+
+
+#tr_wp5
+tr_wp5<-aj_com_tr_sd_wp[start_date.x=='2020-05-02']
+tr_wp5<-tr_wp5[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp5<-as.data.frame(tr_wp5)
+#map_nb_wp4
+map_tr_wp5<-inner_join(CSA,tr_wp5)
+
+
+
+
+#tr_wp7
+tr_wp7<-aj_com_tr_sd_wp[start_date.x=='2020-07-04']
+tr_wp7<-tr_wp7[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp7<-as.data.frame(tr_wp7)
+#map_nb_wp4
+map_tr_wp7<-inner_join(CSA,tr_wp7)
+
+
+
+
+#tr_wp9
+tr_wp9<-aj_com_tr_sd_wp[start_date.x=='2020-09-05']
+tr_wp9<-tr_wp9[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp9<-as.data.frame(tr_wp9)
+#map_nb_wp4
+map_tr_wp9<-inner_join(CSA,tr_wp9)
+
+
+
+
+
+
+#tr_wp11
+tr_wp11<-aj_com_tr_sd_wp[start_date.x=='2020-11-07']
+tr_wp11<-tr_wp11[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp11<-as.data.frame(tr_wp11)
+#map_nb_wp4
+map_tr_wp11<-inner_join(CSA,tr_wp11)
+
+
+
+
+#tr_wp13
+tr_wp13<-aj_com_tr_sd_wp[start_date.x=='2021-01-02']
+tr_wp13<-tr_wp13[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp13<-as.data.frame(tr_wp13)
+#map_nb_wp4
+map_tr_wp13<-inner_join(CSA,tr_wp13)
+
+#tr_wp14
+tr_wp14<-aj_com_tr_sd_wp[start_date.x=='2021-02-06']
+tr_wp14<-tr_wp14[,.(GEOID_NEW,zeta_achdc_w)]
+tr_wp14<-as.data.frame(tr_wp14)
+#map_nb_wp4
+map_tr_wp14<-inner_join(CSA,tr_wp14)
+
+
+
+
+```
+
+
+
+```{R}
+#MAP 
+map_tr_wp3 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE, 
+          layer.name = "2020-03_%change_CHDC_TR") 
+
+map_tr_wp4 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-04_%change_CHDC_TR") 
+
+map_tr_wp5 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-05_%change_CHDC_TR") 
+
+map_tr_wp7 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-07_%change_CHDC_TR") 
+
+
+
+```
+
+
+
+
+```{R}
+#MAP 
+
+map_tr_wp9 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5),  legend = TRUE
+          ,layer.name = "2020-09_%change_CHDC_TR") 
+
+map_tr_wp11 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5),  legend = TRUE
+          ,layer.name = "2020-11_%change_CHDC_TR") 
+
+
+map_tr_wp13 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2021-01_%change_CHDC_TR") 
+
+
+map_tr_wp14 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2021-02_%change_CHDC_TR") 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

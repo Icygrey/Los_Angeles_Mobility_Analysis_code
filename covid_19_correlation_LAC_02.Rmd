@@ -1,0 +1,549 @@
+---
+title: "covid_19_correlation_LAC_02"
+author: "Tao Huang"
+date: "5/27/2021"
+output: html_document
+---
+
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+*covid-19 IR   V.S.   Mobility-variables  in LAC levels*
+## 1.0 completely_home_device_count    ---chdc
+rollmean_crude_ir  （3-16 号才有数据）
+v.s.        
+aj_rollmean      （3-02号才有数据。）
+这样可以吗？ 
+
+1.找出合适的lag time （通常感染了过段时间才有case：crude-ir滞后。。要try哪一个lag time得出来的correlation值最显著。）
+
+
+## 1.1 median_percentage_time_home   ---mpth
+## 1.2 full_time_work_behavior_devices    ---ftwbd
+## 1.3 distance_traveled_from_home     ---dtrh
+
+1.0 completely_home_device_count    ---chdc
+# 
+```{R}
+#install.packages('epiDisplay')
+library(epiDisplay)
+
+#LAC级别数据，之后要写入来源
+#covid
+covidate_dp<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/covidate_dp.csv')
+#chdc
+aj_com_lac_sd
+#mpth
+aj_com_lac_sd_mpth
+#ftwbd
+aj_com_lac_sd_ftwbd
+#dtrh
+aj_com_lac_sd_dtrh
+
+
+```
+
+
+```{R}
+cor_covidate_dp<-covidate_dp[,.(date,rollmean_crude_ir)]
+cor_covidate_dp<-cor_covidate_dp[7:nrow(cor_covidate_dp)]
+cor_covidate_dp<-cor_covidate_dp[,date:=as.IDate(date)]
+
+cor_aj_com_lac_sd<-aj_com_lac_sd[,.(start_date,aj_rollmean)]
+cor_aj_com_lac_sd<-cor_aj_com_lac_sd[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_base<-cor_aj_com_lac_sd
+
+
+##loop
+cor_covid_chdc<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd<-cor_aj_com_lac_sd_base
+  cor_aj_com_lac_sd$start_date<-cor_aj_com_lac_sd$start_date+i
+  covid_chdc<-inner_join(cor_aj_com_lac_sd,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_chdc$aj_rollmean,covid_chdc$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_chdc<-rbind(cor_covid_chdc,l)
+}
+
+names(cor_covid_chdc)<-c('lag_day','chdc_R','chdc_P')
+cor_covid_chdc<-as.data.table(cor_covid_chdc)
+
+
+```
+## Plus
+```{R}
+#MPTH
+cor_aj_com_lac_sd_mpth<-aj_com_lac_sd_mpth[,.(start_date,aj_rollmean_mpth)]
+cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth[7:nrow(cor_aj_com_lac_sd_mpth)]
+cor_aj_com_lac_sd_mpth_base<-cor_aj_com_lac_sd_mpth
+
+
+##loop
+cor_covid_mpth<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth_base
+  cor_aj_com_lac_sd_mpth$start_date<-cor_aj_com_lac_sd_mpth$start_date+i
+  covid_mpth<-inner_join(cor_aj_com_lac_sd_mpth,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_mpth$aj_rollmean_mpth,covid_mpth$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_mpth<-rbind(cor_covid_mpth,l)
+}
+
+names(cor_covid_mpth)<-c('lag_day','mpth_R','mpth_P')
+cor_covid_mpth<-as.data.table(cor_covid_mpth)
+
+```
+
+```{R}
+#ftwbd
+
+
+cor_aj_com_lac_sd_ftwbd<-aj_com_lac_sd_ftwbd[,.(start_date,aj_rollmean_ftwbd)]
+cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd[7:nrow(cor_aj_com_lac_sd_ftwbd)]
+cor_aj_com_lac_sd_ftwbd_base<-cor_aj_com_lac_sd_ftwbd
+
+
+##loop
+cor_covid_ftwbd<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd_base
+  cor_aj_com_lac_sd_ftwbd$start_date<-cor_aj_com_lac_sd_ftwbd$start_date+i
+  covid_ftwbd<-inner_join(cor_aj_com_lac_sd_ftwbd,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_ftwbd$aj_rollmean_ftwbd,covid_ftwbd$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_ftwbd<-rbind(cor_covid_ftwbd,l)
+}
+
+names(cor_covid_ftwbd)<-c('lag_day','ftwbd_R','ftwbd_P')
+cor_covid_ftwbd<-as.data.table(cor_covid_ftwbd)
+
+
+
+
+
+
+```
+
+```{R}
+#dtrh
+
+cor_aj_com_lac_sd_dtrh<-aj_com_lac_sd_dtrh[,.(start_date,aj_rollmean_dtrh)]
+cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_dtrh_base<-cor_aj_com_lac_sd_dtrh
+
+
+##loop
+cor_covid_dtrh<-data.frame()
+for(i in 1:50){
+  cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh_base
+  cor_aj_com_lac_sd_dtrh<-aj_com_lac_sd_dtrh[,.(start_date,aj_rollmean_dtrh)]
+  cor_aj_com_lac_sd_dtrh$start_date<-cor_aj_com_lac_sd_dtrh$start_date+i
+  covid_dtrh<-inner_join(cor_aj_com_lac_sd_dtrh,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_dtrh$aj_rollmean_dtrh,covid_dtrh$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_dtrh<-rbind(cor_covid_dtrh,l)
+}
+
+names(cor_covid_dtrh)<-c('lag_day','dtrh_R','dtrh_P')
+cor_covid_dtrh<-as.data.table(cor_covid_dtrh)
+
+
+
+
+
+```
+
+```{R}
+##combine
+cor_covid_chdc
+cor_covid_mpth
+cor_covid_ftwbd
+cor_covid_dtrh
+
+
+cor_covid_sd<-inner_join(cor_covid_chdc,cor_covid_mpth)
+cor_covid_sd<-inner_join(cor_covid_sd,cor_covid_ftwbd)
+cor_covid_sd<-inner_join(cor_covid_sd,cor_covid_dtrh)
+
+view(cor_covid_sd)
+cor_covid_sd
+
+#round 处理
+#cor_covid_sd[,chdc_P:=round(chdc_P,3)]
+```
+```{R}
+cor_covid_sd
+
+
+cor_covid_sd_plot <-cor_covid_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ lag_day, line.width = 0.00001,span=0.00001,alpha=0.5) %>%
+  add_lines(y =~ chdc_R ,name = 'Completed home device count:R') %>%
+  add_lines(y =~ mpth_R, name = 'median percentage time home:R') %>%
+  add_lines(y =~ ftwbd_R ,name = 'full time work behavior devices:R') %>%
+  add_lines(y =~ dtrh_R ,name = 'distance traveled from home:R') %>%
+  layout(title = "Pearson correlation coefficient varies over Lag_day")  
+cor_covid_sd_plot
+
+
+
+```
+
+*扩大lag*
+
+
+
+
+```{R}
+cor_covidate_dp<-covidate_dp[,.(date,rollmean_crude_ir)]
+cor_covidate_dp<-cor_covidate_dp[7:nrow(cor_covidate_dp)]
+cor_covidate_dp<-cor_covidate_dp[,date:=as.IDate(date)]
+
+cor_aj_com_lac_sd<-aj_com_lac_sd[,.(start_date,aj_rollmean)]
+cor_aj_com_lac_sd<-cor_aj_com_lac_sd[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_base<-cor_aj_com_lac_sd
+
+
+##loop
+cor_covid_chdc<-data.frame()
+for(i in 1:20){
+  cor_aj_com_lac_sd<-cor_aj_com_lac_sd_base
+  cor_aj_com_lac_sd$start_date<-cor_aj_com_lac_sd$start_date+i
+  covid_chdc<-inner_join(cor_aj_com_lac_sd,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_chdc$aj_rollmean,covid_chdc$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_chdc<-rbind(cor_covid_chdc,l)
+}
+
+names(cor_covid_chdc)<-c('lag_day','chdc_R','chdc_P')
+cor_covid_chdc<-as.data.table(cor_covid_chdc)
+
+#MPTH
+cor_aj_com_lac_sd_mpth<-aj_com_lac_sd_mpth[,.(start_date,aj_rollmean_mpth)]
+cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth[7:nrow(cor_aj_com_lac_sd_mpth)]
+cor_aj_com_lac_sd_mpth_base<-cor_aj_com_lac_sd_mpth
+
+
+##loop
+cor_covid_mpth<-data.frame()
+for(i in 1:20){
+  cor_aj_com_lac_sd_mpth<-cor_aj_com_lac_sd_mpth_base
+  cor_aj_com_lac_sd_mpth$start_date<-cor_aj_com_lac_sd_mpth$start_date+i
+  covid_mpth<-inner_join(cor_aj_com_lac_sd_mpth,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_mpth$aj_rollmean_mpth,covid_mpth$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_mpth<-rbind(cor_covid_mpth,l)
+}
+
+names(cor_covid_mpth)<-c('lag_day','mpth_R','mpth_P')
+cor_covid_mpth<-as.data.table(cor_covid_mpth)
+
+#ftwbd
+
+
+cor_aj_com_lac_sd_ftwbd<-aj_com_lac_sd_ftwbd[,.(start_date,aj_rollmean_ftwbd)]
+cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd[7:nrow(cor_aj_com_lac_sd_ftwbd)]
+cor_aj_com_lac_sd_ftwbd_base<-cor_aj_com_lac_sd_ftwbd
+
+
+##loop
+cor_covid_ftwbd<-data.frame()
+for(i in 1:20){
+  cor_aj_com_lac_sd_ftwbd<-cor_aj_com_lac_sd_ftwbd_base
+  cor_aj_com_lac_sd_ftwbd$start_date<-cor_aj_com_lac_sd_ftwbd$start_date+i
+  covid_ftwbd<-inner_join(cor_aj_com_lac_sd_ftwbd,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_ftwbd$aj_rollmean_ftwbd,covid_ftwbd$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_ftwbd<-rbind(cor_covid_ftwbd,l)
+}
+
+names(cor_covid_ftwbd)<-c('lag_day','ftwbd_R','ftwbd_P')
+cor_covid_ftwbd<-as.data.table(cor_covid_ftwbd)
+
+
+
+
+
+```
+
+
+
+
+
+
+```{R}
+#dtrh
+
+cor_aj_com_lac_sd_dtrh<-aj_com_lac_sd_dtrh[,.(start_date,aj_rollmean_dtrh)]
+cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh[7:nrow(cor_aj_com_lac_sd)]
+cor_aj_com_lac_sd_dtrh_base<-cor_aj_com_lac_sd_dtrh
+
+
+##loop
+cor_covid_dtrh<-data.frame()
+for(i in 1:20){
+  cor_aj_com_lac_sd_dtrh<-cor_aj_com_lac_sd_dtrh_base
+  cor_aj_com_lac_sd_dtrh<-aj_com_lac_sd_dtrh[,.(start_date,aj_rollmean_dtrh)]
+  cor_aj_com_lac_sd_dtrh$start_date<-cor_aj_com_lac_sd_dtrh$start_date+i
+  covid_dtrh<-inner_join(cor_aj_com_lac_sd_dtrh,cor_covidate_dp,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_dtrh$aj_rollmean_dtrh,covid_dtrh$rollmean_crude_ir)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_dtrh<-rbind(cor_covid_dtrh,l)
+}
+
+names(cor_covid_dtrh)<-c('lag_day','dtrh_R','dtrh_P')
+cor_covid_dtrh<-as.data.table(cor_covid_dtrh)
+
+
+
+
+
+
+
+cor_covid_sd<-inner_join(cor_covid_chdc,cor_covid_mpth)
+cor_covid_sd<-inner_join(cor_covid_sd,cor_covid_ftwbd)
+cor_covid_sd<-inner_join(cor_covid_sd,cor_covid_dtrh)
+
+
+cor_covid_sd
+
+#round 处理
+#cor_covid_sd[,chdc_P:=round(chdc_P,3)]
+
+view(cor_covid_sd)
+
+cor_covid_sd_plot <-cor_covid_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ lag_day, line.width = 0.00001,span=0.00001,alpha=0.5) %>%
+  add_lines(y =~ chdc_R ,name = 'Completed home device count:R') %>%
+  add_lines(y =~ mpth_R, name = 'median percentage time home:R') %>%
+  add_lines(y =~ ftwbd_R ,name = 'full time work behavior devices:R') %>%
+  add_lines(y =~ dtrh_R ,name = 'distance traveled from home:R') %>%
+  layout(title = "Pearson correlation coefficient varies over Lag_day")  
+cor_covid_sd_plot
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+```{R}
+library("ggpubr")
+##有问题
+lag12_chdc<-cor_aj_com_lac_sd
+cor_covidate_dp
+
+
+#lag == 12
+lag12_chdc$start_date<-lag12_chdc$start_date+12
+lag12_covid_chdc<-inner_join(lag12_chdc,cor_covidate_dp,by=c('start_date'='date'))
+
+cor.test(lag12_covid_chdc$aj_rollmean,lag12_covid_chdc$rollmean_crude_ir)
+
+
+ggscatter(lag12_covid_chdc, x = "aj_rollmean", y = "rollmean_crude_ir", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "aj_rollmean_zeta_chdc", ylab = "rollmean_crude_ir")
+
+
+#lag ==22
+lag12_chdc$start_date<-lag12_chdc$start_date+12
+lag12_covid_chdc<-inner_join(lag12_chdc,cor_covidate_dp,by=c('start_date'='date'))
+
+
+
+library("ggpubr")
+ggscatter(lag12_covid_chdc, x = "aj_rollmean", y = "rollmean_crude_ir", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "aj_rollmean_zeta_chdc", ylab = "rollmean_crude_ir")
+
+```
+
+
+
+###改成wp模式比较合理：
+
+```{R}
+covidate
+
+#mobility data
+aj_com_lac_sd_wow_wp
+
+aj_com_lac_sd_wow_wp_mpth
+
+aj_com_lac_sd_wow_wp_ftwbd
+
+aj_com_lac_sd_wow_wp_dtrh
+```
+
+```{R}
+cor_covidate<-covidate[,.(date,crude_ir_week)]
+
+cor_aj_com_lac_sd_wow_wp<-aj_com_lac_sd_wow_wp[,.(start_date,zeta_achdc_w)]
+cor_aj_com_lac_sd_wow_wp<-cor_aj_com_lac_sd_wow_wp[,start_date:=as.Date(start_date)]
+
+
+
+##loop
+cor_covid_chdc_wp<-data.frame()
+for(i in 1:5){
+  cor_aj_com_lac_sd_wow_wp$start_date<-cor_aj_com_lac_sd_wow_wp$start_date+7*i
+  covid_chdc_wp<-inner_join(cor_aj_com_lac_sd_wow_wp,cor_covidate,by=c('start_date'='date'))
+  cor_test_wp<-cor.test(covid_chdc_wp$zeta_achdc_w,covid_chdc_wp$crude_ir_week)
+  l<-c(i,cor_test_wp$estimate,cor_test_wp$p.value)
+  cor_covid_chdc_wp<-rbind(cor_covid_chdc_wp,l)
+}
+
+names(cor_covid_chdc_wp)<-c('lag_week','chdc_R','chdc_P')
+cor_covid_chdc_wp<-as.data.table(cor_covid_chdc_wp)
+
+
+```
+
+# aj_com_lac_sd_wow_wp_mpth
+```{R}
+
+
+cor_aj_com_lac_sd_wow_wp_mpth<-aj_com_lac_sd_wow_wp_mpth[,.(start_date,zeta_mpth_w)]
+cor_aj_com_lac_sd_wow_wp_mpth<-cor_aj_com_lac_sd_wow_wp_mpth[,start_date:=as.Date(start_date)]
+
+
+
+##loop
+cor_covid_mpth_wp<-data.frame()
+for(i in 1:5){
+  cor_aj_com_lac_sd_wow_wp_mpth$start_date<-cor_aj_com_lac_sd_wow_wp_mpth$start_date+7*i
+  covid_mpth_wp<-inner_join(cor_aj_com_lac_sd_wow_wp_mpth,cor_covidate,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_mpth_wp$zeta_mpth_w,covid_mpth_wp$crude_ir_week)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_mpth_wp<-rbind(cor_covid_mpth_wp,l)
+}
+
+names(cor_covid_mpth_wp)<-c('lag_week','mpth_R','mpth_P')
+cor_covid_mpth_wp<-as.data.table(cor_covid_mpth_wp)
+cor_covid_mpth_wp
+
+```
+
+# aj_com_lac_sd_wow_wp_ftwbd
+```{R}
+
+cor_aj_com_lac_sd_wow_wp_ftwbd<-aj_com_lac_sd_wow_wp_ftwbd[,.(start_date,zeta_ftwbd_w)]
+cor_aj_com_lac_sd_wow_wp_ftwbd<-cor_aj_com_lac_sd_wow_wp_ftwbd[,start_date:=as.Date(start_date)]
+
+
+
+##loop
+cor_covid_ftwbd_wp<-data.frame()
+for(i in 1:5){
+  cor_aj_com_lac_sd_wow_wp_ftwbd$start_date<-cor_aj_com_lac_sd_wow_wp_ftwbd$start_date+7*i
+  covid_ftwbd_wp<-inner_join(cor_aj_com_lac_sd_wow_wp_ftwbd,cor_covidate,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_ftwbd_wp$zeta_ftwbd_w,covid_ftwbd_wp$crude_ir_week)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_ftwbd_wp<-rbind(cor_covid_ftwbd_wp,l)
+}
+
+names(cor_covid_ftwbd_wp)<-c('lag_week','ftwbd_R','ftwbd_P')
+cor_covid_ftwbd_wp<-as.data.table(cor_covid_ftwbd_wp)
+cor_covid_ftwbd_wp
+
+```
+
+
+# aj_com_lac_sd_wow_wp_dtrh
+```{R}
+
+
+cor_aj_com_lac_sd_wow_wp_dtrh<-aj_com_lac_sd_wow_wp_dtrh[,.(start_date,zeta_dtrh_w)]
+cor_aj_com_lac_sd_wow_wp_dtrh<-cor_aj_com_lac_sd_wow_wp_dtrh[,start_date:=as.Date(start_date)]
+
+
+
+##loop
+cor_covid_dtrh_wp<-data.frame()
+for(i in 1:5){
+  cor_aj_com_lac_sd_wow_wp_dtrh$start_date<-cor_aj_com_lac_sd_wow_wp_dtrh$start_date+7*i
+  covid_dtrh_wp<-inner_join(cor_aj_com_lac_sd_wow_wp_dtrh,cor_covidate,by=c('start_date'='date'))
+  cor_test<-cor.test(covid_dtrh_wp$zeta_dtrh_w,covid_dtrh_wp$crude_ir_week)
+  l<-c(i,cor_test$estimate,cor_test$p.value)
+  cor_covid_dtrh_wp<-rbind(cor_covid_dtrh_wp,l)
+}
+
+names(cor_covid_dtrh_wp)<-c('lag_week','dtrh_R','dtrh_P')
+cor_covid_dtrh_wp<-as.data.table(cor_covid_dtrh_wp)
+cor_covid_dtrh_wp
+
+
+```
+
+## combine wp
+```{R}
+cor_covid_sd_wp<-inner_join(cor_covid_chdc_wp,cor_covid_mpth_wp)
+cor_covid_sd_wp<-inner_join(cor_covid_sd_wp,cor_covid_ftwbd_wp)
+cor_covid_sd_wp<-inner_join(cor_covid_sd_wp,cor_covid_dtrh_wp)
+
+view(cor_covid_sd_wp)
+cor_covid_sd_wp
+
+```
+
+
+
+
+#######################
+
+```{R}
+rolling_covidate_dp_plot <-covidate_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ date, y = ~ rollmean_crude_ir, type = 'scatter', mode = 'lines',line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling_covidate_dp_plot—LAC'") 
+rolling_covidate_dp_plot
+
+```
+
+```{R}
+lac_zeta_roll <-aj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ aj_rollmean, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Rolling mean Zeta of 'completely_home_device_count' in LAC levels")  
+lac_zeta_roll
+
+```
+
+
+
+
+
+

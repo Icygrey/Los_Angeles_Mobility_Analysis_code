@@ -1,0 +1,416 @@
+---
+title: "Covid_19_LA_Crude_ir"
+author: "Tao Huang"
+date: "4/12/2021"
+output: html_document
+chunk_output_type: console
+---
+
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+
+```{R}
+
+case_data <- fread("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/latimes-place-totals.csv ")
+case_data<-as.data.frame(case_data)
+
+case_data <- subset(case_data, county == "Los Angeles")
+case_data$date <- as.Date(case_data$date)
+case_data$name <- as.character(case_data$name)
+covidate<-case_data
+
+
+
+#name下的每一个都需要，用来做neighbor  #id无所谓，可以删去
+
+
+```
+
+
+
+```{R}
+
+# Regression the name
+covidate$name<-gsub('[0-9.*]+: ','',covidate$name)
+covidate$name<-gsub('[0-9.*]+: ','',covidate$name)
+covidate$name<-gsub('[a-z.*] - ','',covidate$name)
+covidate$name<-gsub('[U]nincorporate','',covidate$name)
+covidate<-as.data.table(covidate)
+```
+
+
+*lac_dp*
+*ps: dailly rolling mean plots* LAC总的
+```{R}
+covidate_dp<-covidate[,.(name,date,confirmed_cases,population)]
+
+covidate_dp[,sum_pop:=sum(population),by=.(date)]
+covidate_dp[,sum_con_cases:=sum(confirmed_cases),by=.(date)]   #只是为了合并当日。
+
+covidate_dp<-covidate_dp[,.(date,sum_pop,sum_con_cases)]
+covidate_dp<-covidate_dp[!duplicated(covidate_dp),]
+
+
+
+###计算new case
+covidate_dp = covidate_dp %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = sum_con_cases - lag(sum_con_cases)) 
+covidate_dp$new_cases[is.na(covidate_dp$new_cases)]<-0
+
+
+
+##求变量
+covidate_dp<-as.data.table(covidate_dp)
+covidate_dp[,crude_ir_dp:= (new_cases/sum_pop)*100000,]
+
+covidate_dp$crude_ir_dp[is.na(covidate_dp$crude_ir_dp)]<-0
+
+
+covidate_dp[crude_ir_dp<0]$crude_ir_dp<-0
+covidate_dp[crude_ir_dp>10000]$crude_ir_dp<-10000
+
+
+covidate_dp<-covidate_dp[!(sum_pop %in% 0)]
+```
+
+```{R}
+covidate_dp_plot <-covidate_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ date, y = ~ crude_ir_dp, type = 'scatter', mode = 'lines',line.width = 0.00001,span=0.00001) %>%
+  layout(title = "covidate_dp_plot—LAC'") 
+covidate_dp_plot
+
+#daily rollmean_crude_ir
+covidate_dp<-covidate_dp[,rollmean_crude_ir:=rollmean(covidate_dp$crude_ir_dp,k = 7,fill = NA, align = 'right')]
+
+
+rolling_covidate_dp_plot <-covidate_dp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ date, y = ~ rollmean_crude_ir, type = 'scatter', mode = 'lines',line.width = 0.00001,span=0.00001) %>%
+  layout(title = "rolling_covidate_dp_plot—LAC'") 
+rolling_covidate_dp_plot
+
+```
+
+
+```{R}
+covidate_dp
+write.csv(covidate_dp,file = 'covidate_dp.csv')
+
+
+```
+
+# daily rolling_mean plots（总值）
+```{R}
+
+
+#daily rollmean_crude_ir
+covidate_dp<-covidate_dp[,rollmean_crude_ir:=rollmean(covidate_dp$crude_ir_dp,k = 7,fill = NA, align = 'right')]
+
+
+
+
+```
+
+*NB x DP 模式：*
+
+covidate_nb_dp
+```{R}
+covidate_nb_dp<-covidate[,.(name,date,confirmed_cases,population)]
+covidate_nb_dp<-covidate_nb_dp[date<"2021-04-01"]
+
+covidate_nb_dp[,sum_pop:=sum(population),by=.(date,name)]
+covidate_nb_dp[,sum_con_cases:=sum(confirmed_cases),by=.(date,name)]   #只是为了合并当日。
+covidate_nb_dp
+
+
+covidate_nb_dp<-covidate_nb_dp[,.(name,date,sum_pop,sum_con_cases)]
+covidate_nb_dp<-covidate_nb_dp[!duplicated(covidate_nb_dp),]
+covidate_nb_dp
+
+tail(covidate_nb_dp)
+
+
+###计算new case
+covidate_nb_dp = covidate_nb_dp %>%
+  group_by(name) %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = sum_con_cases - lag(sum_con_cases)) %>% # Difference in case between days 
+ arrange(name)
+covidate_nb_dp$new_cases[is.na(covidate_nb_dp$new_cases)]<-0
+
+
+
+##求变量
+covidate_nb_dp<-as.data.table(covidate_nb_dp)
+covidate_nb_dp[,crude_ir_dp:= (new_cases/sum_pop)*100000,]
+
+covidate_nb_dp$crude_ir_dp[is.na(covidate_nb_dp$crude_ir_dp)]<-0
+
+
+covidate_nb_dp[crude_ir_dp<0]$crude_ir_dp<-0
+covidate_nb_dp[crude_ir_dp>10000]$crude_ir_dp<-10000
+
+
+covidate_nb_dp<-covidate_nb_dp[!(sum_pop %in% 0)]
+
+
+```
+
+
+
+
+
+#Step 3: Plot COVID-19 infections by neighborhood
+● Read-in the COVID-19 infection data by neighborhood using my code “readin_COVID_data.Rmd” (in the COVID19_data folder)
+   
+   ○ The code will read-in the COVID-19 data for each neighborhood from the LA Times, and calculate the number of new infections each day from the number of cumulative infections
+
+● Calculate for    week the 7-day new infection incidence rate per 100,000 population (“1-week crude IR”), i.e.
+  
+  ○ *1-week crude IR = [ sum(new infections in location i during 7 days) / population of I ] * 100,000 *
+  
+● For each of the 8 weeks, plot the map of each neighborhood colored by the value of the 1-week crude
+IR
+
+###解释：
+代码用于从 累计infectious中 计算出的每日感染者   ：data： LA每日不同city的情况：confirmed_cases、population
+原数据是daily数据---
+
+
+summary.LA ： LA层面，每日新增。（confirmed_cases、new_cases）   --------》LA.plot
+summary.city ： city层面，每日新增。（name/city 、confirmed_cases、new_cases ） ------》City.plot 
+
+LA 88个cities ，和超过400个neighbors？？
+为何结果是352？？
+
+summary.city = summary.city %>%
+  group_by(name) %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = confirmed_cases - lag(confirmed_cases)) %>% # Difference in case between days 
+ arrange(name)
+
+
+
+对data：
+*1-week crude IR = [ sum(new infections in location i during 7 days) / population of I ] * 100,000 *
+new infections in location i during 7 days： 某地区7日内新增
+population : 地区population不变的，但某些地区要合并求和。。。
+
+
+*思维导图：*
+###step1:转成week 模式
+s2:添加变量------》1-week crude IR：    得出不同neighbor的week
+s3:跟Zone_mappings合并
+s4:做map。
+
+
+summary.city
+```{R}
+covidate<-covidate[,.(name,date,confirmed_cases,population)]
+
+##week pattern
+covidate[,week:=weekdays(covidate$date)]
+
+
+which_covidate_week<-format(covidate$date,format='%W')
+covidate[,which_week:= which_covidate_week]
+
+covidate<-covidate[date<"2021-04-01"]
+
+```
+
+##set variable
+```{R}
+covidate[,sum_pop:=sum(population),by=.(date,name)]
+covidate[,sum_con_cases:=sum(confirmed_cases),by=.(date,name)]   #只是为了合并当日。
+
+
+
+covidate<-covidate[,.(name,date,week,which_week,sum_pop,sum_con_cases)]
+covidate<-covidate[!duplicated(covidate),]
+covidate<-covidate[week=='Saturday']
+
+
+###计算new case
+covidate = covidate %>%
+  group_by(name) %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = sum_con_cases - lag(sum_con_cases)) %>% # Difference in case between days 
+ arrange(name)
+covidate$new_cases[is.na(covidate$new_cases)]<-0
+
+
+
+##求变量
+covidate<-as.data.table(covidate)
+covidate[,crude_ir_week:= (new_cases/sum_pop)*100000,]
+
+covidate$crude_ir_week[is.na(covidate$crude_ir_week)]<-0
+
+
+covidate[crude_ir_week<0]$crude_ir_week<-0
+covidate[crude_ir_week>10000]$crude_ir_week<-10000
+
+
+covidate<-covidate[!(sum_pop %in% 0)]
+
+
+```
+
+
+##maping
+
+
+```{R}
+#使用 shape数据
+library(sf)
+library(ggplot2)
+library(mapview)
+
+CSA_NB<-st_read('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/data/shapefiles/CSAs/Countywide_Statistical_Areas_(CSA).shp')
+
+CSA_NB$LABEL<-gsub('[U]nincorporated - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('City of ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Los Angeles - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Silverlake','Silver Lake',CSA_NB$LABEL)
+
+```
+
+### 8maps 03\04\05\07\09\11\  01\ 02
+
+
+```{R}
+#march, no real first week.---  '2020-03-21'
+setnames(covidate,'name','LABEL')
+
+covidate_03<-covidate[date=='2020-03-21']
+covidate_03<-covidate_03[,.(LABEL,crude_ir_week)]
+covidate_03<-as.data.frame(covidate_03)
+map_covidate_03<-inner_join(CSA_NB,covidate_03)
+
+#04, no real first week.---  '2020-03-21'
+covidate_04<-covidate[date=='2020-04-04']
+covidate_04<-covidate_04[,.(LABEL,crude_ir_week)]
+covidate_04<-as.data.frame(covidate_04)
+map_covidate_04<-inner_join(CSA_NB,covidate_04)
+
+#05, no real first week.---  '2020-03-21'
+covidate_05<-covidate[date=='2020-05-02']
+covidate_05<-covidate_05[,.(LABEL,crude_ir_week)]
+covidate_05<-as.data.frame(covidate_05)
+map_covidate_05<-inner_join(CSA_NB,covidate_05)
+
+
+#07, no real first week.---  '2020-03-21'
+covidate_07<-covidate[date=='2020-07-04']
+covidate_07<-covidate_07[,.(LABEL,crude_ir_week)]
+covidate_07<-as.data.frame(covidate_07)
+map_covidate_07<-inner_join(CSA_NB,covidate_07)
+
+
+#09, no real first week.---  '2020-03-21'
+covidate_09<-covidate[date=='2020-09-05']
+covidate_09<-covidate_09[,.(LABEL,crude_ir_week)]
+covidate_09<-as.data.frame(covidate_09)
+map_covidate_09<-inner_join(CSA_NB,covidate_09)
+
+
+#11, no real first week.---  '2020-03-21'
+covidate_11<-covidate[date=='2020-11-07']
+covidate_11<-covidate_11[,.(LABEL,crude_ir_week)]
+covidate_11<-as.data.frame(covidate_11)
+map_covidate_11<-inner_join(CSA_NB,covidate_11)
+
+
+#13, no real first week.---  '2020-03-21'
+covidate_13<-covidate[date=='2021-01-09']
+covidate_13<-covidate_13[,.(LABEL,crude_ir_week)]
+covidate_13<-as.data.frame(covidate_13)
+map_covidate_13<-inner_join(CSA_NB,covidate_13)
+
+
+#14, no real first week.---  '2020-03-21'
+covidate_14<-covidate[date=='2021-02-06']
+covidate_14<-covidate_14[,.(LABEL,crude_ir_week)]
+covidate_14<-as.data.frame(covidate_14)
+map_covidate_14<-inner_join(CSA_NB,covidate_14)
+
+#covidate[date=='2021-01-02']###why is negative??
+```
+
+
+#03\04\05\07
+```{R}
+#03\04\05\07
+
+map_covidate_03 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2020-03_Crude_IR") 
+
+map_covidate_04 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2020-04_Crude_IR") 
+
+map_covidate_05 %>% 
+  mapview(zcol = "crude_ir_week", at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000), legend = TRUE,layer.name = "2020-05_Crude_IR") 
+
+map_covidate_07 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000), legend = TRUE,layer.name = "2020-07_Crude_IR") 
+
+
+
+```
+# 09\11\01\ 02
+```{R}
+map_covidate_09 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2020-09_Crude_IR") 
+
+map_covidate_11 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2020-11_Crude_IR") 
+
+map_covidate_13 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2021-01_Crude_IR") 
+
+map_covidate_14 %>% 
+  mapview(zcol = "crude_ir_week",at = c(0,50,100,200,400,600,800,1000,2000,4000,8000,10000),  legend = TRUE,layer.name = "2021-02_Crude_IR") 
+
+
+
+
+```
+
+
+
+write.csv(covidate,file = 'covidate.csv',row.names = F)
+
+
+
+
+

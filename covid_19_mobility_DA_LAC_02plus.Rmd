@@ -1,0 +1,579 @@
+---
+title: "covid_19_mobility_DA_LAC_02plus"
+author: "Tao Huang"
+date: "4/13/2021"
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(zoo)
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+#median_percentage_time_home : 
+Median percentage of time we observed devices home versus observed at all during the time period.
+待在家里的时间所占的百分比的中位数。。。越大代表，人们花更多时间呆家里
+
+#full_time_work_behavior_devices ：
+Out of the device_count, the number of devices that spent greater than 6 hours at a location other than their home geohash-7 during the period of 8 am - 6 pm in local time.
+全职工作的人数，越大代表疫情仍然出去参加全职工作的人数。
+
+#distance_traveled_from_home：
+Median distance (in meters) traveled from the geohash-7 of the home by the devices included in the device_count during the time period (excluding any distances of 0). We first find the median for each device and then find the median across all of the devices.
+这段时间内，这个地区一个人出去的距离家里的中位数（m），越大代表这地方人普遍出门的地方越远
+
+
+# 1.Zeta(t) weekly aggregate timeseries for LA County overall (WP)
+
+## 1.1 median_percentage_time_home   ---mpth
+## 1.2 full_time_work_behavior_devices    ---ftwbd
+## 1.3 distance_traveled_from_home     ---dtrh
+
+## 1.0 prepare
+```{R}
+v0_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+v1_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+v0_la_sd_after01<-v0_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+v1_la_sd_after01<-v1_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+
+```
+
+
+## 1.1 median_percentage_time_home
+*daily pattern _ rolling mean*
+
+```{R}
+
+aj_v0_lac_sd_mpth <- v0_la_sd_after01[,sum(median_percentage_time_home)/sum(device_count),by=start_date]
+aj_v1_lac_sd_mpth <- v1_la_sd_after01[,sum(median_percentage_time_home)/sum(device_count),by=start_date]
+
+##caj
+caj_v0_lac_sd_mpth <- v0_la_sd_after01[,sum(median_percentage_time_home)/sum(candidate_device_count),by=start_date]
+caj_v1_lac_sd_mpth <- v1_la_sd_after01[,sum(median_percentage_time_home)/sum(candidate_device_count),by=start_date]
+
+```
+
+
+##aj
+```{R}
+
+#v0
+#以03/01为base
+#V1 相当于是 median_percentage_time_home的总和  #1.1494722 03/01 2020
+aj_v0_lac_sd_mpth<-aj_v0_lac_sd_mpth[start_date>='2020-03-01']
+aj_v0_lac_sd_mpth[,zeta_base:=1.1494722]
+aj_v0_lac_sd_mpth[,zeta_mpth:=V1/zeta_base]
+#aj_v0_lac_sd_mpth[,dod_mpth:=c(0,diff(zeta_mpth))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：1.721004
+
+aj_v1_lac_sd_mpth<-aj_v1_lac_sd_mpth[start_date>='2020-05-10'   
+                           &start_date<'2021-04-01' ]
+aj_v1_lac_sd_mpth[,zeta_base:=1.721004]
+aj_v1_lac_sd_mpth[,zeta_mpth:=V1/zeta_base]
+#aj_v1_lac_sd_mpth[,dod_mpth:=c(0,diff(zeta_mpth))]
+
+```
+##caj
+```{R}
+#v0
+#以03/01为base
+#V1 相当于是 median_percentage_time_home的总和  #0.5248249 03/01 2020
+caj_v0_lac_sd_mpth<-caj_v0_lac_sd_mpth[start_date>='2020-03-01']
+caj_v0_lac_sd_mpth[,zeta_base:=0.5248249]
+caj_v0_lac_sd_mpth[,zeta_mpth:=V1/zeta_base]
+#caj_v0_lac_sd_mpth[,dod_mpth:=c(0,diff(zeta_mpth))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：0.7631878
+
+caj_v1_lac_sd_mpth<-caj_v1_lac_sd_mpth[start_date>='2020-05-10'
+                             &start_date<'2021-04-01']
+caj_v1_lac_sd_mpth[,zeta_base:=0.7631878]
+caj_v1_lac_sd_mpth[,zeta_mpth:=V1/zeta_base]
+#caj_v1_lac_sd_mpth[,dod_mpth:=c(0,diff(zeta_mpth))]
+
+
+```
+
+```{R}
+#combine v0 and v1
+aj_com_lac_sd_mpth<-rbind(aj_v0_lac_sd_mpth,aj_v1_lac_sd_mpth)
+caj_com_lac_sd_mpth<-rbind(caj_v0_lac_sd_mpth,caj_v1_lac_sd_mpth)
+
+
+
+
+#rolling_mean contrast CD v.s. CDC
+#daily rolling--mean zeta
+aj_roll_mpth<-rollmean(aj_com_lac_sd_mpth$zeta_mpth,k = 7,fill = NA, align = 'right')
+aj_com_lac_sd_mpth$aj_rollmean_mpth<-aj_roll_mpth
+
+caj_roll_mpth<-rollmean(caj_com_lac_sd_mpth$zeta_mpth,k = 7,fill = NA, align = 'right')
+caj_com_lac_sd_mpth$caj_rollmean_mpth<-caj_roll_mpth
+
+
+
+#plots
+#combine
+caj_com_lac_sd_mpth[,aj_rollmean_mpth := aj_com_lac_sd_mpth$aj_rollmean_mpth]
+
+caj_lac_zeta_roll_mpth <-caj_com_lac_sd_mpth %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_mpth ,name = 'rollmean_DC_zeta_mpth') %>%
+  add_lines(y =~ caj_rollmean_mpth ,name = 'rollmean_CDC_zeta_mpth') %>%
+  layout(title = "rollmean_DC_Zeta vs. rollmean_CDC_Zeta : 'median_percentage_time_home' in LAC levels")  
+caj_lac_zeta_roll_mpth
+
+
+
+##only rolling-mean mpth
+caj_lac_zeta_roll_mpth <-caj_com_lac_sd_mpth %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_mpth ,name = 'rollmean_DC_zeta_mpth') %>%
+  layout(title = "rollmean_DC_Zeta: 'median_percentage_time_home' in LAC levels")  
+caj_lac_zeta_roll_mpth
+
+
+```
+
+
+
+
+
+
+
+*week pattern*
+```{R}
+aj_v0_lac_sd_wow_mpth<-v0_la_sd_after01[,sum(median_percentage_time_home)/sum(device_count),by=which_week]
+
+
+
+#添加日期轴，为了做时间序列。
+date_v0_lac<-v0_la_sd_after01[,.(which_week,week,start_date)]
+date_v0_lac<-unique(date_v0_lac[week == 'Saturday'])
+
+aj_v0_lac_sd_wow_wp_mpth<-inner_join(aj_v0_lac_sd_wow_mpth,date_v0_lac, by='which_week',all.x=T)
+
+    #base 1.098626
+
+
+```
+*for v1*
+```{R}
+
+aj_v1_lac_sd_wow_mpth<-v1_la_sd_after01[,sum(median_percentage_time_home)/sum(device_count),by=which_week]
+
+
+
+
+#添加日期轴，为了做时间序列。
+date_v1_lac<-v1_la_sd_after01[,.(which_week,week,start_date)]
+date_v1_lac<-unique(date_v1_lac[week == 'Saturday'])
+
+aj_v1_lac_sd_wow_wp_mpth<-inner_join(aj_v1_lac_sd_wow_mpth,date_v1_lac, by='which_week',all.x=T)
+
+
+```
+
+
+```{R}
+#for v0
+aj_v0_lac_sd_wow_wp_mpth[,zeta_mpth_w:=V1/1.098626]
+
+#for v1
+aj_v1_lac_sd_wow_wp_mpth[,zeta_mpth_w:=V1/1.098626]
+
+
+#combine
+aj_com_lac_sd_wow_wp_mpth<-rbind(aj_v0_lac_sd_wow_wp_mpth,aj_v1_lac_sd_wow_wp_mpth)
+```
+
+```{R}
+lac_zeta_com_wp_mpth <-aj_com_lac_sd_wow_wp_mpth %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_mpth_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: zeta of adjusted 'median_percentage_time_home'")
+lac_zeta_com_wp_mpth
+
+
+
+
+```
+
+
+
+
+
+
+
+
+## 1.2 full_time_work_behavior_devices    ---ftwbd
+
+*daily pattern _ rolling mean*
+
+```{R}
+
+aj_v0_lac_sd_ftwbd <- v0_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(device_count),by=start_date]
+aj_v1_lac_sd_ftwbd <- v1_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(device_count),by=start_date]
+
+##caj
+caj_v0_lac_sd_ftwbd <- v0_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(candidate_device_count),by=start_date]
+caj_v1_lac_sd_ftwbd <- v1_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(candidate_device_count),by=start_date]
+
+```
+
+
+##aj
+```{R}
+
+#v0
+#以03/01为base
+#V1 相当于是 full_time_work_behavior_devices 的总和  #0.07801504 03/01 2020
+aj_v0_lac_sd_ftwbd<-aj_v0_lac_sd_ftwbd[start_date>='2020-03-01']
+aj_v0_lac_sd_ftwbd[,zeta_base:=0.07801504]
+aj_v0_lac_sd_ftwbd[,zeta_ftwbd:=V1/zeta_base]
+#aj_v0_lac_sd_ftwbd[,dod_ftwbd:=c(0,diff(zeta_ftwbd))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：0.06415878
+
+aj_v1_lac_sd_ftwbd<-aj_v1_lac_sd_ftwbd[start_date>='2020-05-10'   
+                           &start_date<'2021-04-01' ]
+aj_v1_lac_sd_ftwbd[,zeta_base:=0.06415878]
+aj_v1_lac_sd_ftwbd[,zeta_ftwbd:=V1/zeta_base]
+#aj_v1_lac_sd_ftwbd[,dod_ftwbd:=c(0,diff(zeta_ftwbd))]
+
+```
+##caj
+```{R}
+#v0
+#以03/01为base
+#V1 相当于是 full_time_work_behavior_devices 的总和  #0.035620028 03/01 2020
+caj_v0_lac_sd_ftwbd<-caj_v0_lac_sd_ftwbd[start_date>='2020-03-01']
+caj_v0_lac_sd_ftwbd[,zeta_base:=0.035620028]
+caj_v0_lac_sd_ftwbd[,zeta_ftwbd:=V1/zeta_base]
+#caj_v0_lac_sd_ftwbd[,dod_ftwbd:=c(0,diff(zeta_ftwbd))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：0.028451524
+
+caj_v1_lac_sd_ftwbd<-caj_v1_lac_sd_ftwbd[start_date>='2020-05-10'
+                             &start_date<'2021-04-01']
+caj_v1_lac_sd_ftwbd[,zeta_base:=0.028451524]
+caj_v1_lac_sd_ftwbd[,zeta_ftwbd:=V1/zeta_base]
+#caj_v1_lac_sd_ftwbd[,dod_ftwbd:=c(0,diff(zeta_ftwbd))]
+
+
+```
+
+```{R}
+#combine v0 and v1
+aj_com_lac_sd_ftwbd<-rbind(aj_v0_lac_sd_ftwbd,aj_v1_lac_sd_ftwbd)
+caj_com_lac_sd_ftwbd<-rbind(caj_v0_lac_sd_ftwbd,caj_v1_lac_sd_ftwbd)
+
+
+
+
+#rolling_mean contrast CD v.s. CDC
+#daily rolling--mean zeta
+aj_roll_ftwbd<-rollmean(aj_com_lac_sd_ftwbd$zeta_ftwbd,k = 7,fill = NA, align = 'right')
+aj_com_lac_sd_ftwbd$aj_rollmean_ftwbd<-aj_roll_ftwbd
+
+caj_roll_ftwbd<-rollmean(caj_com_lac_sd_ftwbd$zeta_ftwbd,k = 7,fill = NA, align = 'right')
+caj_com_lac_sd_ftwbd$caj_rollmean_ftwbd<-caj_roll_ftwbd
+
+
+
+#plots
+#combine
+caj_com_lac_sd_ftwbd[,aj_rollmean_ftwbd := aj_com_lac_sd_ftwbd$aj_rollmean_ftwbd]
+
+caj_lac_zeta_roll_ftwbd <-caj_com_lac_sd_ftwbd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_ftwbd ,name = 'rollmean_DC_zeta_ftwbd') %>%
+  add_lines(y =~ caj_rollmean_ftwbd ,name = 'rollmean_CDC_zeta_ftwbd') %>%
+  layout(title = "rollmean_DC_Zeta vs. rollmean_CDC_Zeta : 'full_time_work_behavior_devices' in LAC levels")  
+caj_lac_zeta_roll_ftwbd
+
+
+caj_lac_zeta_roll_ftwbd <-caj_com_lac_sd_ftwbd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_ftwbd ,name = 'rollmean_DC_zeta_ftwbd') %>%
+  layout(title = "rollmean_DC_Zeta: 'full_time_work_behavior_devices' in LAC levels")  
+caj_lac_zeta_roll_ftwbd
+```
+
+
+*week pattern*
+```{R}
+aj_v0_lac_sd_wow_ftwbd<-v0_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(device_count),by=which_week]
+
+
+
+#添加日期轴，为了做时间序列。
+date_v0_lac<-v0_la_sd_after01[,.(which_week,week,start_date)]
+date_v0_lac<-unique(date_v0_lac[week == 'Saturday'])
+
+aj_v0_lac_sd_wow_wp_ftwbd<-inner_join(aj_v0_lac_sd_wow_ftwbd,date_v0_lac, by='which_week',all.x=T)
+
+    #base 0.05609341
+
+
+```
+*for v1*
+```{R}
+
+aj_v1_lac_sd_wow_ftwbd<-v1_la_sd_after01[,sum(full_time_work_behavior_devices)/sum(device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v1_lac<-v1_la_sd_after01[,.(which_week,week,start_date)]
+date_v1_lac<-unique(date_v1_lac[week == 'Saturday'])
+
+aj_v1_lac_sd_wow_wp_ftwbd<-inner_join(aj_v1_lac_sd_wow_ftwbd,date_v1_lac, by='which_week',all.x=T)
+
+
+```
+
+
+```{R}
+#for v0
+aj_v0_lac_sd_wow_wp_ftwbd[,zeta_ftwbd_w:=V1/0.05609341]
+
+#for v1
+aj_v1_lac_sd_wow_wp_ftwbd[,zeta_ftwbd_w:=V1/0.05609341]
+
+
+#combine
+aj_com_lac_sd_wow_wp_ftwbd<-rbind(aj_v0_lac_sd_wow_wp_ftwbd,aj_v1_lac_sd_wow_wp_ftwbd)
+```
+
+```{R}
+lac_zeta_com_wp_ftwbd <-aj_com_lac_sd_wow_wp_ftwbd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_ftwbd_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: zeta of adjusted 'full_time_work_behavior_devices'")
+lac_zeta_com_wp_ftwbd
+
+```
+
+
+
+
+## 1.3 distance_traveled_from_home     ---dtrh
+
+*daily pattern _ rolling mean*
+
+```{R}
+
+aj_v0_lac_sd_dtrh <- v0_la_sd_after01[,sum(distance_traveled_from_home)/sum(device_count),by=start_date]
+aj_v1_lac_sd_dtrh <- v1_la_sd_after01[,sum(distance_traveled_from_home)/sum(device_count),by=start_date]
+
+##caj
+caj_v0_lac_sd_dtrh <- v0_la_sd_after01[,sum(distance_traveled_from_home)/sum(candidate_device_count),by=start_date]
+caj_v1_lac_sd_dtrh <- v1_la_sd_after01[,sum(distance_traveled_from_home)/sum(candidate_device_count),by=start_date]
+
+```
+
+
+##aj
+```{R}
+
+#v0
+#以03/01为base
+#V1 相当于是 distance_traveled_from_home 的总和  #100.71922 03/01 2020
+aj_v0_lac_sd_dtrh<-aj_v0_lac_sd_dtrh[start_date>='2020-03-01']
+aj_v0_lac_sd_dtrh[,zeta_base:=100.71922]
+aj_v0_lac_sd_dtrh[,zeta_dtrh:=V1/zeta_base]
+#aj_v0_lac_sd_dtrh[,dod_dtrh:=c(0,diff(zeta_dtrh))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：55.88791
+
+aj_v1_lac_sd_dtrh<-aj_v1_lac_sd_dtrh[start_date>='2020-05-10'   
+                           &start_date<'2021-04-01' ]
+aj_v1_lac_sd_dtrh[,zeta_base:=55.88791]
+aj_v1_lac_sd_dtrh[,zeta_dtrh:=V1/zeta_base]
+#aj_v1_lac_sd_dtrh[,dod_dtrh:=c(0,diff(zeta_dtrh))]
+
+```
+##caj
+```{R}
+#v0
+#以03/01为base
+#V1 相当于是 distance_traveled_from_home 的总和  #45.98628 03/01 2020
+caj_v0_lac_sd_dtrh<-caj_v0_lac_sd_dtrh[start_date>='2020-03-01']
+caj_v0_lac_sd_dtrh[,zeta_base:=45.98628]
+caj_v0_lac_sd_dtrh[,zeta_dtrh:=V1/zeta_base]
+#caj_v0_lac_sd_dtrh[,dod_dtrh:=c(0,diff(zeta_dtrh))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：24.78376
+
+caj_v1_lac_sd_dtrh<-caj_v1_lac_sd_dtrh[start_date>='2020-05-10'
+                             &start_date<'2021-04-01']
+caj_v1_lac_sd_dtrh[,zeta_base:=24.78376]
+caj_v1_lac_sd_dtrh[,zeta_dtrh:=V1/zeta_base]
+#caj_v1_lac_sd_dtrh[,dod_dtrh:=c(0,diff(zeta_dtrh))]
+
+
+```
+
+```{R}
+#combine v0 and v1
+aj_com_lac_sd_dtrh<-rbind(aj_v0_lac_sd_dtrh,aj_v1_lac_sd_dtrh)
+caj_com_lac_sd_dtrh<-rbind(caj_v0_lac_sd_dtrh,caj_v1_lac_sd_dtrh)
+
+
+
+
+#rolling_mean contrast CD v.s. CDC
+#daily rolling--mean zeta
+aj_roll_dtrh<-rollmean(aj_com_lac_sd_dtrh$zeta_dtrh,k = 7,fill = NA, align = 'right')
+aj_com_lac_sd_dtrh$aj_rollmean_dtrh<-aj_roll_dtrh
+
+caj_roll_dtrh<-rollmean(caj_com_lac_sd_dtrh$zeta_dtrh,k = 7,fill = NA, align = 'right')
+caj_com_lac_sd_dtrh$caj_rollmean_dtrh<-caj_roll_dtrh
+
+
+
+#plots
+#combine
+caj_com_lac_sd_dtrh[,aj_rollmean_dtrh := aj_com_lac_sd_dtrh$aj_rollmean_dtrh]
+
+caj_lac_zeta_roll_ftwbd <-caj_com_lac_sd_dtrh %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_dtrh ,name = 'rollmean_DC_zeta_ftwbd') %>%
+  add_lines(y =~ caj_rollmean_dtrh ,name = 'rollmean_CDC_zeta_ftwbd') %>%
+  layout(title = "rollmean_DC_Zeta vs. rollmean_CDC_Zeta : 'distance_traveled_from_home' in LAC levels")  
+caj_lac_zeta_roll_ftwbd
+
+
+caj_lac_zeta_roll_ftwbd <-caj_com_lac_sd_dtrh %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean_dtrh ,name = 'rollmean_DC_zeta_ftwbd') %>%
+  layout(title = "rollmean_DC_Zeta : 'distance_traveled_from_home' in LAC levels")  
+caj_lac_zeta_roll_ftwbd
+```
+
+
+
+*week pattern*
+```{R}
+aj_v0_lac_sd_wow_dtrh<-v0_la_sd_after01[,sum(distance_traveled_from_home)/sum(device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v0_lac<-v0_la_sd_after01[,.(which_week,week,start_date)]
+date_v0_lac<-unique(date_v0_lac[week == 'Saturday'])
+
+aj_v0_lac_sd_wow_wp_dtrh<-inner_join(aj_v0_lac_sd_wow_dtrh,date_v0_lac, by='which_week',all.x=T)
+
+    #base 109.7537
+
+
+```
+*for v1*
+```{R}
+
+aj_v1_lac_sd_wow_dtrh<-v1_la_sd_after01[,sum(distance_traveled_from_home)/sum(device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v1_lac<-v1_la_sd_after01[,.(which_week,week,start_date)]
+date_v1_lac<-unique(date_v1_lac[week == 'Saturday'])
+
+aj_v1_lac_sd_wow_wp_dtrh<-inner_join(aj_v1_lac_sd_wow_dtrh,date_v1_lac, by='which_week',all.x=T)
+
+```
+
+
+```{R}
+#for v0
+aj_v0_lac_sd_wow_wp_dtrh[,zeta_dtrh_w:=V1/109.7537]
+
+#for v1
+aj_v1_lac_sd_wow_wp_dtrh[,zeta_dtrh_w:=V1/109.7537]
+
+
+#combine
+aj_com_lac_sd_wow_wp_dtrh<-rbind(aj_v0_lac_sd_wow_wp_dtrh,aj_v1_lac_sd_wow_wp_dtrh)
+```
+
+```{R}
+lac_zeta_com_wp_dtrh <-aj_com_lac_sd_wow_wp_dtrh %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_dtrh_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: zeta of adjusted 'distance_traveled_from_home'")
+lac_zeta_com_wp_dtrh
+
+```
+
+
+
+
+
+
+
+
+
+
+write.csv(caj_com_lac_sd_mpth,file = 'aj_com_lac_sd_mpth.csv')
+write.csv(caj_com_lac_sd_ftwbd,file = 'aj_com_lac_sd_ftwbd.csv')
+write.csv(caj_com_lac_sd_dtrh,file = 'aj_com_lac_sd_dtrh.csv')
+caj_com_lac_sd_mpth
+caj_com_lac_sd_ftwbd
+caj_com_lac_sd_dtrh
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

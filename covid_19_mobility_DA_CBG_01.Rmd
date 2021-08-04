@@ -1,0 +1,650 @@
+---
+title: "covid_19_mobility_DA_CBG_01"
+author: Tao Huang
+Date: March 23 2021
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(tidycensus)
+
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+# Job Description
+Wrangling Social Distance(V2.0, v2.1) datasets to do mobility analysis in several levels (cbg, LAC, tract and neighborhood).
+-This Rmd.file focus on CBG level in LA, and I just take one variable (completely_home_device_count) for example to do EDA analysis, and I will promote to other target variables later.
+
+# Wrangling and EDA
+
+## STEP ONE: Wrangling Social distance datasets.
+### 1. Filter the social distancing metrics data to only CBG in LA County.
+- Processed by CARC, I got 2 datasets of Social Distance in LA County:
+*v0_la_sd* : Extract from Social distance metrics v2.0 (Jan-01-2020 to May-09-2020)
+*v1_la_sd* : Extract from Social distance metrics v2.1 (2019 & May-10-2020 to February-2021)
+
+```{r}
+v0_la_sd<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd.csv')
+v1_la_sd<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd.csv')
+
+```
+
+
+### 2. Scale candidated variables by Census datasets
+Census number is relatively fixed under the same CBG (within the same area), but the number of detected devices varies on a daily basis. Through adjustment, the daily sample size difference can be ignored and the variation of variables in a fixed area over time can be observed. 
+
+-There are 2 verison:
+1.aj_ : ‘device_count’ is denominator. (I choose this for now.)
+2.caj_: ‘candidate_device_count’ is denominator.
+```{R}
+#census data
+#B01001e1 = cbg census population
+#cbg_census<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/cbg_census.csv')
+
+
+#Getting data from the 2015-2019 5-year ACS:
+#API key seems out of date..
+cbg_census<-get_acs(geography ='block group',
+          variables = 'B01003_001',
+          state = "CA",
+         survey = "acs5",
+         county = 'Los Angeles')
+#cbg_census<-read.csv('/Users/huangtao/Desktop/covid_19_keck_Research/researc#h_code/cbg_census.csv')
+
+cbg_census<-as.data.table(cbg_census)
+cbg_census<-cbg_census[,GEOID:=substring(cbg_census$GEOID,2,12)]
+cbg_census<-cbg_census[,.(GEOID,estimate)]
+
+#write.csv(cbg_census,file = 'cbg_census.csv',row.names=F)
+#merge 
+v0_la_sd<-v0_la_sd[,origin_census_block_group:=as.character(origin_census_block_group)]
+v1_la_sd<-v1_la_sd[,origin_census_block_group:=as.character(origin_census_block_group)]
+
+v0_la_sd<-merge(v0_la_sd,cbg_census,by.x='origin_census_block_group',by.y = 'GEOID', all.x = T)
+v1_la_sd<-merge(v1_la_sd,cbg_census,by.x='origin_census_block_group',by.y = 'GEOID', all.x = T)
+
+
+#adjust target variables
+#aj_v0_la_sd
+#aj_
+v0_la_sd[,aj_part_time_work_behavior_devices:= round((part_time_work_behavior_devices/device_count)* estimate)]
+v0_la_sd[,aj_full_time_work_behavior_devices:= round((full_time_work_behavior_devices/device_count)* estimate)]
+aj_v0_la_sd<-v0_la_sd[,aj_completely_home_device_count:= round((completely_home_device_count/device_count)* estimate)]
+#caj_
+aj_v0_la_sd[,caj_part_time_work_behavior_devices:= round((part_time_work_behavior_devices/candidate_device_count)* estimate)]
+aj_v0_la_sd[,caj_full_time_work_behavior_devices:= round((full_time_work_behavior_devices/candidate_device_count)* estimate)]
+aj_v0_la_sd[,caj_completely_home_device_count:= round((completely_home_device_count/candidate_device_count)* estimate)]
+
+
+
+#for v1:
+#aj_v1_la_sd
+#aj_
+v1_la_sd[,aj_part_time_work_behavior_devices:= round((part_time_work_behavior_devices/device_count)* estimate)]
+v1_la_sd[,aj_full_time_work_behavior_devices:= round((full_time_work_behavior_devices/device_count)* estimate)]
+aj_v1_la_sd<-v1_la_sd[,aj_completely_home_device_count:= round((completely_home_device_count/device_count)* estimate)]
+#caj_
+aj_v1_la_sd[,caj_part_time_work_behavior_devices:= round((part_time_work_behavior_devices/candidate_device_count)* estimate)]
+aj_v1_la_sd[,caj_full_time_work_behavior_devices:= round((full_time_work_behavior_devices/candidate_device_count)* estimate)]
+aj_v1_la_sd[,caj_completely_home_device_count:= round((completely_home_device_count/candidate_device_count)* estimate)]
+```
+
+
+
+### 3-A(Day pattern). Create indices of change over time, relative to a pre-pandemic baseline.
+- v2.0 :Compared with data of 2020-03-01 in each cbg, I set up zeta_i_(t) , dod and wow.
+
+- v2.1 :Compared with data of 2019-03-01 in each cbg, I set up zeta_i_(t) , dod and wow.
+
+#### I process v2.0 first (by day)
+```{R}
+#add week
+aj_v0_la_sd[,week:=weekdays(aj_v0_la_sd$start_date)]
+aj_v1_la_sd[,week:=weekdays(aj_v1_la_sd$start_date)]
+
+
+#for v2.0
+aj_v0_la_sd_base<-aj_v0_la_sd[start_date=='2020-03-01' ]
+
+#set base variable to compare
+setnames(aj_v0_la_sd_base,'aj_completely_home_device_count', 'aj_completely_home_device_count_base' )
+setnames(aj_v0_la_sd_base,'aj_part_time_work_behavior_devices', 'aj_part_time_work_behavior_devices_base' )
+setnames(aj_v0_la_sd_base,'aj_full_time_work_behavior_devices', 'aj_full_time_work_behavior_devices_base' )
+setnames(aj_v0_la_sd_base,'caj_part_time_work_behavior_devices', 'caj_part_time_work_behavior_devices_base' )
+setnames(aj_v0_la_sd_base,'caj_full_time_work_behavior_devices', 'caj_full_time_work_behavior_devices_base' )
+setnames(aj_v0_la_sd_base,'caj_completely_home_device_count', 'caj_completely_home_device_count_base' )
+
+
+#extract target variables
+aj_v0_la_sd_base<-aj_v0_la_sd_base[,.(origin_census_block_group,start_date,aj_part_time_work_behavior_devices_base,aj_full_time_work_behavior_devices_base,aj_completely_home_device_count_base,caj_part_time_work_behavior_devices_base,caj_full_time_work_behavior_devices_base,caj_completely_home_device_count_base)]
+
+
+#merge
+aj_v0_la_sd<-merge(aj_v0_la_sd,aj_v0_la_sd_base,by='origin_census_block_group',all.x = T)
+
+```
+
+- Balance sample: Remove any CBG that is missing > 4 weeks of time entries. 
+
+```{R}
+##for v2.0
+
+aj_v0_la_sd[which(is.na(aj_v0_la_sd$aj_completely_home_device_count_base))]
+#data in 2020-03-01 have 4 NA cbg.(shows below)
+#60374032001\60375736015\60379800071\60379902000
+aj_v0_la_sd<-aj_v0_la_sd[!(origin_census_block_group%in%c('60374032001','60375736015','60379800071','60379902000'))]
+#sum(is.na(aj_v0_la_sd))
+aj_v0_la_sd<-na.omit(aj_v0_la_sd)
+
+#sort(table(aj_v0_la_sd$origin_census_block_group))
+##max= 130, remove all mssing >4 week (28days)
+#60379800191 60372145033 60372734021 60379800221 60375736014 60379800231 60375991001 
+#         24          43          48          55          56          59          68 
+#60372774001 60372043001 60372736003 60377021022 60375766020 60375516001 60372169001 
+#         70          76          81          81          98         100 
+aj_v0_la_sd<-aj_v0_la_sd[!(origin_census_block_group%in%c('60379800191','60372145033','60372734021','60379800221','60375736014','60379800231','60375991001','60372774001','60372043001','60372736003','60377021022','60375766020','60375516001','60372169001'))]
+
+
+
+#set up Zeta 
+aj_v0_la_sd<-as.data.table(aj_v0_la_sd)
+aj_v0_la_sd_dod<-aj_v0_la_sd[start_date.x >= '2020-03-01']
+aj_v0_la_sd_dod[,zeta_achdc_t := aj_completely_home_device_count/aj_completely_home_device_count_base]
+
+#check NA in zeta caused by denominator==0, and let them equal to 0.
+#sum(is.na(aj_v0_la_sd_dod$zeta_achdc_t))   
+aj_v0_la_sd_dod$zeta_achdc_t[is.na(aj_v0_la_sd_dod$zeta_achdc_t)]<-0
+
+#set up dod---dod_achdc =Zeta_i(t) - Zeta_i(t-1)
+aj_v0_la_sd_dod<-aj_v0_la_sd_dod[by=.('origin_census_block_group','start_date.x')]
+#aj_v0_la_sd_dod[ , dod_achdc:= c(0,diff(zeta_achdc_t)),]
+#sum(is.na(aj_v0_la_sd_dod$dod_achdc)) 
+
+```
+
+
+#### Then, I process v2.1 (by day)
+----change to compare with 2020-03-01
+```{R}
+#change to  aj_v0_la_sd_base: 2020-03-01 as baseline
+#aj_v1_la_sd_wow_wp<-na.omit(aj_v1_la_sd_wow_wp)
+
+aj_v1_la_sd<-merge(aj_v1_la_sd,aj_v0_la_sd_base,by='origin_census_block_group',all.x = T)
+
+aj_v1_la_sd<-as.data.table(aj_v1_la_sd)
+#sum(is.na(aj_v1_la_sd))
+aj_v1_la_sd<-na.omit(aj_v1_la_sd)
+
+
+#sort(table(aj_v1_la_sd$origin_census_block_group))
+
+## Balance sample~~ remove any CBG that is missing > 4 weeks of time entries 
+##max= 651 , remove all missing >4 week    ====>   remove all <623 days
+#60379800191 60374002074 60375991001 60372734021 60372145033 60379800071 60379800231 
+#        212         368         384         432         445         448         471 
+#60379800221 60371891013 60377017013 60377021025 60374032001 60374019012 60379800061 
+#        474         513         516         523         527         533         537 
+#60375736014 60379800011 60374019011 60375746011 60372371013 60377021026 60372652012 
+#        538         548         549         551         557         557         563 
+#60372772002 60372774001 60372736003 60373200001 60379303011 60374024041 60379202001 
+#        565         575         580         580         583         584         585 
+#60377021022 60379800251 60372283104 60372734023 60371959022 60375403003 60371914202 
+#        586         589         591         594         598         601         603 
+#60372043001 60372735022 60371835101 60371894002 60371835102 60372199023 60372739025 
+#        608         608         609         611         616         616         617 
+#60372141003 60371920022 60379200261 60372742023 60372038002 60374617002 60375990003 
+#        619         622  
+
+aj_v1_la_sd<-aj_v1_la_sd[!(origin_census_block_group%in%c(
+'60379800191', '60374002074', '60375991001', '60372734021', '60372145033','60379800071','60379800231','60379800221','60371891013 ','60377017013',' 60377021025',' 60374032001',' 60374019012','60379800061 ','60375736014',' 60379800011',' 60374019011',' 60375746011','60372371013 ','60377021026',' 60372652012',' 60372772002',' 60372774001','60372736003 ','60373200001',' 60379303011',' 60374024041',' 60379202001','60377021022 ','60379800251',' 60372283104',' 60372734023',' 60371959022',' 60375403003',' 60371914202',' 60372043001',' 60372735022',' 60371835101',' 60371894002',' 60371835102',' 60372199023',' 60372739025',' 60372141003',' 60371920022',' 60379200261',' 60372742023',' 60372038002',' 60374617002',' 60375990003' ))]
+
+
+#set up Zeta
+aj_v1_la_sd_dod<-aj_v1_la_sd[start_date.x >= '2020-05-10'
+                             &start_date.x<'2021-04-01',]
+aj_v1_la_sd_dod[,zeta_achdc_t := aj_completely_home_device_count/aj_completely_home_device_count_base]
+
+aj_v1_la_sd_dod$zeta_achdc_t[is.na(aj_v1_la_sd_dod$zeta_achdc_t)]<-0
+#sum(is.na(aj_v1_la_sd_dod$zeta_achdc_t))
+
+#set up dod--dod_achdc =Zeta_i(t) - Zeta_i(t-1)
+aj_v1_la_sd_dod<-aj_v1_la_sd_dod[by=.('origin_census_block_group','start_date.x')]
+#aj_v1_la_sd_dod[ , dod_achdc:= c(0,diff(zeta_achdc_t))]
+
+```
+
+
+
+### 4-A(Day pattern).Visualize Zeta and dod
+
+#### Histogram over all Zeta_i(t)’s for all CBG (v2.0 and v2.1)
+
+```{R}
+# transfer cbg variable from numeric to char.
+aj_v0_la_sd_dod[,origin_census_block_group:=as.character(aj_v0_la_sd_dod$origin_census_block_group)]
+aj_v1_la_sd_dod[,origin_census_block_group:=as.character(aj_v1_la_sd_dod$origin_census_block_group)]
+
+
+# for v2.0
+p1 <- aj_v0_la_sd_dod %>%
+  ggplot( aes(x=zeta_achdc_t)) +
+    geom_histogram( fill="#69b3a2", color="#e9ecef", alpha=0.8, breaks=seq(-1,5,0.05)) +
+    ggtitle("v2.0: Histogram over all Zeta_i(t)’s for all CBG") +
+    theme_ipsum() +
+    theme(
+      plot.title = element_text(size=15)
+    )
+
+p1
+
+
+# for v2.1
+p1_v1<- aj_v1_la_sd_dod %>%
+  ggplot( aes(x=zeta_achdc_t)) +
+    geom_histogram( fill="#69b3a2", color="#e9ecef", alpha=0.8, breaks=seq(-1,5,0.05)) +
+    ggtitle("v2.1: Histogram over all Zeta_i(t)’s for all CBG") +
+    theme_ipsum() +
+    theme(
+      plot.title = element_text(size=15)
+    )
+
+p1_v1
+```
+
+```{R}
+summary(aj_v0_la_sd_dod$zeta_achdc_t)
+summary(aj_v1_la_sd_dod$zeta_achdc_t)
+```
+
+
+
+#### A time-series line plot for 200 randomly selected CBG of Zeta & DoD.
+
+```{R}
+##combine v0,v1
+cbg_Dod_com_1<-aj_v0_la_sd_dod[,.(start_date.x,origin_census_block_group,zeta_achdc_t)]
+cbg_Dod_com_2<-aj_v1_la_sd_dod[,.(start_date.x,origin_census_block_group,zeta_achdc_t)]
+cbg_Dod_com <-rbind(cbg_Dod_com_1,cbg_Dod_com_2)
+
+tail(cbg_Dod_com)
+cbg_Dod_com<-cbg_Dod_com[order(origin_census_block_group,start_date.x)]
+cbg_Dod_com[,dod_achdc:= c(0,diff(zeta_achdc_t)),by=origin_census_block_group]
+##set dod
+
+
+
+##random selected 200 cbg
+
+uni_cbg<-unique(cbg_Dod_com$origin_census_block_group)
+random_cbg<-sample(uni_cbg,200 ,replace=F)
+random_cbg_Dod_com<-cbg_Dod_com[origin_census_block_group %in% random_cbg,]
+```
+
+- Time-series of Zeta(com)
+```{R}
+
+p2_zeta_com<-random_cbg_Dod_com %>% 
+  mutate() %>% 
+  group_by(origin_census_block_group) %>% 
+  plot_ly(x = ~ start_date.x,width=0.0001,
+          line.width = 0.00001,span=0.00001,alpha=0.1) %>% 
+  add_lines(y = ~ zeta_achdc_t, color = ~ factor(origin_census_block_group))%>%
+  layout(title = "Zeta of adjusted 'completely_home_device_count'(Compared 2020-03-01)")
+
+p2_zeta_com
+
+```
+
+- Time-series of dod in v2.0 and v2.1
+```{R}
+
+p2_dod_com<-random_cbg_Dod_com %>% 
+  mutate() %>% 
+  group_by(origin_census_block_group) %>% 
+  plot_ly(x = ~ start_date.x,width=0.0001,
+          line.width = 0.00001,span=0.00001,alpha=0.1) %>% 
+  add_lines(y = ~ dod_achdc, color = ~ factor(origin_census_block_group))%>%
+  layout(title = "Dod of adjusted 'completely_home_device_count'(Compared 2020-03-01)")
+
+p2_dod_com
+
+###ps: maybe, V2.0 include some cbg which v2.1 do not include.
+
+```
+
+
+
+#### Heatmap of dod in com
+
+```{R}
+
+
+##com
+p3_dod<-random_cbg_Dod_com %>% plot_ly(x=~origin_census_block_group,y=~start_date.x,
+        z=~dod_achdc,
+        colors = colorRamp(c("black", "blue",'green','yellow','red')),
+        type='heatmap',alpha = 0.7,
+        showscale=T)%>%
+  layout(title = "v2.0 Heatmap:dod of adjusted 'completely_home_device_count(after 03/01, Compared 2020-03-01)'")
+p3_dod
+
+
+```
+
+
+
+
+
+### 3-B(Week pattern).
+
+#### aggregating to week
+aj_v0_la_sd   //aj_v0_la_sd_dod   ---->aj_v0_la_sd_wow
+aj_v1_la_sd    //aj_v1_la_sd_dod    ---->aj_v1_la_sd_wow
+
+- for v2.0 base week: 2020-03-02 (Mon)--- 2020-03-08 (Sun) , I will average data per week.
+```{R}
+aj_v0_la_sd[,origin_census_block_group:=as.character(aj_v0_la_sd$origin_census_block_group)]
+aj_v1_la_sd[,origin_census_block_group:=as.character(aj_v1_la_sd$origin_census_block_group)]
+
+#set up week pattern dataset: aj_v0_la_sd_wow
+aj_v0_la_sd_wow<-aj_v0_la_sd[start_date.x > '2020-03-01']
+
+
+# Set a ordinal numeral for the week
+# %W--week_pattern
+
+which_week_v0<-format(aj_v0_la_sd_wow$start_date.x,format='%W')
+aj_v0_la_sd_wow[,which_week:= which_week_v0]
+
+
+
+#average the target variables per week
+aj_v0_la_sd_wow[,aj_part_time_work_behavior_devices_week:= round((sum(part_time_work_behavior_devices)/sum(device_count))*estimate), by=.(origin_census_block_group,which_week)]
+aj_v0_la_sd_wow[,aj_full_time_work_behavior_devices_week:= round((sum(full_time_work_behavior_devices)/sum(device_count))*estimate),by=.(origin_census_block_group,which_week)]
+aj_v0_la_sd_wow[,aj_completely_home_device_count_week:= round((sum(completely_home_device_count)/sum(device_count))*estimate),by=.(origin_census_block_group,which_week)]
+
+aj_v0_la_sd_wow[,caj_part_time_work_behavior_devices_week:= round((sum(caj_part_time_work_behavior_devices)/sum(candidate_device_count))*estimate),
+                by=.(origin_census_block_group,which_week)]
+aj_v0_la_sd_wow[,caj_full_time_work_behavior_devices_week:= round((sum(caj_full_time_work_behavior_devices)/sum(candidate_device_count))*estimate), 
+                by=.(origin_census_block_group,which_week)]
+aj_v0_la_sd_wow[,caj_completely_home_device_count_week:= round((sum(caj_completely_home_device_count)/sum(candidate_device_count))*estimate),
+                by=.(origin_census_block_group,which_week)]
+
+#let Sunday for point-time
+aj_v0_la_sd_wow_wp<-aj_v0_la_sd_wow[week=='Sunday']   
+
+```
+
+- set zeta and dod for v2.0
+```{R}
+aj_v0_la_sd_wow_base<-aj_v0_la_sd_wow_wp[start_date.x=='2020-03-08'] 
+
+setnames(aj_v0_la_sd_wow_base,'aj_part_time_work_behavior_devices_week', 'aj_part_time_work_behavior_devices_wowbase' )
+setnames(aj_v0_la_sd_wow_base,'aj_full_time_work_behavior_devices_week', 'aj_full_time_work_behavior_devices_wowbase' )
+setnames(aj_v0_la_sd_wow_base,'aj_completely_home_device_count_week', 'aj_completely_home_device_count_wowbase' )
+setnames(aj_v0_la_sd_wow_base,'caj_part_time_work_behavior_devices_week', 'caj_part_time_work_behavior_devices_wowbase' )
+setnames(aj_v0_la_sd_wow_base,'caj_full_time_work_behavior_devices_week', 'caj_full_time_work_behavior_devices_wowbase' )
+setnames(aj_v0_la_sd_wow_base,'caj_completely_home_device_count_week', 'caj_completely_home_device_count_wowbase' )
+
+
+#merge with base
+aj_v0_la_sd_wow_wp<-merge(aj_v0_la_sd_wow_wp,aj_v0_la_sd_wow_base,by='origin_census_block_group',all.x = T)
+
+#extract target variables
+aj_v0_la_sd_wow_wp<-aj_v0_la_sd_wow_wp[,.(origin_census_block_group,start_date.x.x,week.x,aj_part_time_work_behavior_devices_week,aj_full_time_work_behavior_devices_week,aj_completely_home_device_count_week,caj_part_time_work_behavior_devices_week,caj_full_time_work_behavior_devices_week,caj_completely_home_device_count_week,aj_part_time_work_behavior_devices_wowbase,aj_full_time_work_behavior_devices_wowbase,aj_completely_home_device_count_wowbase,caj_part_time_work_behavior_devices_wowbase,caj_full_time_work_behavior_devices_wowbase,caj_completely_home_device_count_wowbase)]
+
+
+## #data in first week in 2020-03 have 5 NA cbg.(shows below)
+#sum(is.na(aj_v0_la_sd_wow_wp$aj_completely_home_device_count_wowbase))
+#sum(is.na(aj_v0_la_sd_wow_wp$aj_full_time_work_behavior_devices_wowbase))
+aj_v0_la_sd_wow_wp[which(is.na(aj_v0_la_sd_wow_wp$aj_completely_home_device_count_wowbase))]
+###delete-- 60372043001，60372734023，60372774001，60375516001，60379800221
+aj_v0_la_sd_wow_wp<-aj_v0_la_sd_wow_wp %>% filter(origin_census_block_group != 60372043001 
+                                    & origin_census_block_group !=60372734023  
+                                    & origin_census_block_group !=60372774001 
+                                    & origin_census_block_group !=60375516001
+                                    & origin_census_block_group !=60379800221)
+
+#setup  zeta_achdc_week
+aj_v0_la_sd_wow_wp<-as.data.table(aj_v0_la_sd_wow_wp)
+aj_v0_la_sd_wow_wp[,zeta_achdc_week:=aj_completely_home_device_count_week/aj_completely_home_device_count_wowbase ]
+
+#check and deal with NA in Zeta
+#sum(is.na(aj_v0_la_sd_wow_wp$zeta_achdc_week))
+aj_v0_la_sd_wow_wp$zeta_achdc_week[is.na(aj_v0_la_sd_wow_wp$zeta_achdc_week)]<-0
+
+#setup wow_achdc =Zeta_i(week) - Zeta_i(week-1)
+#aj_v0_la_sd_wow_wp[ , wow_achdc:= c(0,diff(zeta_achdc_week)),,by=origin_census_block_group]
+
+#sum(is.na(aj_v0_la_sd_wow_wp$wow_achdc))
+
+```
+
+
+
+
+
+
+- for v2.1:
+I just see the situation between 2020-05-11(Mon)----2020-12-27(SUN)
+and base week: 2019-03-04 (Mon)--- 2019-03-10 (Sun) , I will average data per week.
+
+```{R}
+#set up week pattern dataset: aj_v1_la_sd_wow
+aj_v1_la_sd_wow<-aj_v1_la_sd[ start_date.x >= '2020-05-11' & start_date.x < '2021-04-01']
+
+
+
+# Set a ordinal numeral for the week
+# %W--week_pattern
+
+which_week_v1<-format(aj_v1_la_sd_wow$start_date.x,format='%W')
+aj_v1_la_sd_wow[,which_week:= which_week_v1]
+
+#test<-aj_v1_la_sd_wow[,.(origin_census_block_group,start_date.x,which_week)]
+
+
+#average the target variables per week
+aj_v1_la_sd_wow[,aj_part_time_work_behavior_devices_week:= round((sum(part_time_work_behavior_devices)/sum(device_count))*estimate), by=.(origin_census_block_group,which_week)]
+aj_v1_la_sd_wow[,aj_full_time_work_behavior_devices_week:= round((sum(full_time_work_behavior_devices)/sum(device_count))*estimate),by=.(origin_census_block_group,which_week)]
+aj_v1_la_sd_wow[,aj_completely_home_device_count_week:= round((sum(completely_home_device_count)/sum(device_count))*estimate),by=.(origin_census_block_group,which_week)]
+
+aj_v1_la_sd_wow[,caj_part_time_work_behavior_devices_week:= round((sum(caj_part_time_work_behavior_devices)/sum(candidate_device_count))*estimate),
+                by=.(origin_census_block_group,which_week)]
+aj_v1_la_sd_wow[,caj_full_time_work_behavior_devices_week:= round((sum(caj_full_time_work_behavior_devices)/sum(candidate_device_count))*estimate),
+                by=.(origin_census_block_group,which_week)]
+aj_v1_la_sd_wow[,caj_completely_home_device_count_week:= round((sum(caj_completely_home_device_count)/sum(candidate_device_count))*estimate),
+                by=.(origin_census_block_group,which_week)]
+
+#let Sunday for point-time
+aj_v1_la_sd_wow_wp<-aj_v1_la_sd_wow[week=='Sunday']   
+
+
+```
+
+- set zeta and dod for v2.1
+```{R}
+
+#merge with base   change to ---- aj_v0_la_sd_wow_base
+aj_v1_la_sd_wow_wp<-merge(aj_v1_la_sd_wow_wp,aj_v0_la_sd_wow_base,by='origin_census_block_group',all.x = T)
+
+#extract target variables
+aj_v1_la_sd_wow_wp<-aj_v1_la_sd_wow_wp[,.(origin_census_block_group,start_date.x.x,week.x,aj_part_time_work_behavior_devices_week,aj_full_time_work_behavior_devices_week,aj_completely_home_device_count_week,caj_part_time_work_behavior_devices_week,caj_full_time_work_behavior_devices_week,caj_completely_home_device_count_week,aj_part_time_work_behavior_devices_wowbase,aj_full_time_work_behavior_devices_wowbase,aj_completely_home_device_count_wowbase,caj_part_time_work_behavior_devices_wowbase,caj_full_time_work_behavior_devices_wowbase,caj_completely_home_device_count_wowbase)]
+
+#sum(is.na(aj_v1_la_sd_wow_wp$aj_completely_home_device_count_wowbase))
+aj_v1_la_sd_wow_wp<-na.omit(aj_v1_la_sd_wow_wp)
+## #data in first week in 2020-03 have 5 NA cbg.(shows below)
+#sum(is.na(aj_v1_la_sd_wow_wp$aj_completely_home_device_count_wowbase))
+#sum(is.na(aj_v1_la_sd_wow_wp$aj_full_time_work_behavior_devices_wowbase))
+#aj_v1_la_sd_wow_wp[which(is.na(aj_v1_la_sd_wow_wp$aj_completely_home_device_count_wowbase))]
+###delete-- 60374032001 60379800191 60379800201 60379800261 60379901000 60379902000 60379903000
+
+#setup  zeta_achdc_week
+aj_v1_la_sd_wow_wp<-as.data.table(aj_v1_la_sd_wow_wp)
+aj_v1_la_sd_wow_wp[,zeta_achdc_week:=aj_completely_home_device_count_week/aj_completely_home_device_count_wowbase ]
+
+#check and deal with NA in Zeta
+#sum(is.na(aj_v1_la_sd_wow_wp$zeta_achdc_week))
+aj_v1_la_sd_wow_wp$zeta_achdc_week[is.na(aj_v1_la_sd_wow_wp$zeta_achdc_week)]<-0
+
+#setup wow_achdc =Zeta_i(week) - Zeta_i(week-1)
+#aj_v1_la_sd_wow_wp[ , wow_achdc:= c(0,diff(zeta_achdc_week)),by=origin_census_block_group]
+#sum(is.na(aj_v1_la_sd_wow_wp$wow_achdc))
+```
+
+### 4-B(Week pattern).Visualize Zeta and dod
+- Histogram(zeta & wow) over all Zeta_i(t)’s for all CBG
+```{R}
+
+
+#combine Histogram
+
+
+p1_zeta_w<-aj_v0_la_sd_wow_wp %>%
+  ggplot( aes(x=zeta_achdc_week)) +
+    geom_histogram( fill="#69b3a2", color="#e9ecef", alpha=0.5, breaks=seq(-1,5,0.05)) +
+    ggtitle("v2.0_week: Histogram over all zeta_i(t)’s for all CBG") +
+    theme_ipsum() +
+    theme(
+      plot.title = element_text(size=15)
+    )
+
+p1_zeta_w
+
+p1_zeta_v1_w<-aj_v1_la_sd_wow_wp %>%
+  ggplot( aes(x=zeta_achdc_week)) +
+    geom_histogram( fill="#69b3a2", color="#e9ecef", alpha=0.5, breaks=seq(-1,5,0.05)) +
+    ggtitle("v2.1_week: Histogram over all zeta_i(t)’s for all CBG") +
+    theme_ipsum() +
+    theme(
+      plot.title = element_text(size=15)
+    )
+
+p1_zeta_v1_w
+```
+
+###combine
+```{R}
+
+##combine v0,v1
+cbg_wow_com_1<-aj_v0_la_sd_wow_wp[,.(start_date.x.x,origin_census_block_group,zeta_achdc_week)]
+cbg_wow_com_2<-aj_v1_la_sd_wow_wp[,.(start_date.x.x,origin_census_block_group,zeta_achdc_week)]
+cbg_wow_com <-rbind(cbg_wow_com_1,cbg_wow_com_2)
+
+##setup wow
+cbg_wow_com<-cbg_wow_com[order(origin_census_block_group,start_date.x.x)]
+cbg_wow_com[,wow_achdc:= c(0,diff(zeta_achdc_week)),by=origin_census_block_group]
+
+##random selected 200 cbg
+
+uni_cbg_wp<-unique(cbg_wow_com$origin_census_block_group)
+random_cbg_wp<-sample(uni_cbg_wp,200 ,replace=F)
+random_cbg_wow_com<-cbg_wow_com[origin_census_block_group %in% random_cbg_wp,]
+
+
+
+```
+
+-A time-series line plot for 200 randomly selected CBG of zeta (v2.0 & v2.1)
+```{R}
+
+p2_com<-random_cbg_wow_com %>% 
+  mutate() %>% 
+  group_by(origin_census_block_group) %>% 
+  plot_ly(x = ~ start_date.x.x,alpha=0.1,width=0.0001) %>% 
+  add_lines(y = ~ zeta_achdc_week, 
+            color = ~ factor(origin_census_block_group)) %>%
+  layout(title = "Zeta of adjusted 'completely_home_device_count (compared first week of 2020-03)'")
+
+p2_com
+```
+
+-A time-series line plot for 500 randomly selected CBG of wow (combine)
+```{R}
+p2_wow<-random_cbg_wow_com %>% 
+  mutate() %>% 
+  group_by(origin_census_block_group) %>% 
+  plot_ly(x = ~ start_date.x.x,alpha = 0.1,width=0.0001) %>% 
+  add_lines(y = ~ wow_achdc, 
+            color = ~ factor(origin_census_block_group))%>%
+  layout(title = "wow of adjusted 'completely_home_device_count(compared first week of 2020-03)'")
+
+p2_wow
+
+```
+
+
+- Heatmap
+```{R}
+p3_wow<-random_cbg_wow_com %>% plot_ly(x=~origin_census_block_group,y=~start_date.x.x,
+        z=~wow_achdc,
+        colors = colorRamp(c("black", "blue",'green','yellow','red')),
+        type='heatmap',
+        showscale=T) %>%
+  layout(title = "Com:wow of adjusted 'completely_home_device_count(after 03/01)'")
+p3_wow
+```
+
+
+write.csv(v0_la_sd,file = 'v0_la_sd_v2.csv')
+#叫V2是为了区别最早最早carc上清洗好的原始版，视作V1
+write.csv(v1_la_sd,file = 'v1_la_sd_v2.csv')
+*ouput v0_la_sd.csv and v1_la_sd.csv*
+
+
+#output一个全能的data集合：v0，和v1。
+()
+名字叫
+v0_la_sd_after01
+v1_la_sd_after01
+
+#v0
+v0_la_sd_after01<-aj_v0_la_sd_wow[,c('V1.x','V1.y','start_date.y'):=NULL]
+setnames(v0_la_sd_after01,'start_date.x','start_date')
+
+#v1
+v1_la_sd_after01<-aj_v1_la_sd_wow[,c('V1.x','V1.y','start_date.y'):=NULL]
+setnames(v1_la_sd_after01,'start_date.x','start_date')
+
+
+
+write.csv(v0_la_sd_after01,file = 'v0_la_sd_after01.csv',row.names	
+=F)
+write.csv(v1_la_sd_after01,file = 'v1_la_sd_after01.csv',row.names	
+=F)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,607 @@
+---
+title: "covid_19_mobility_DA_LAC_02"
+Date: March 23 2021
+author: Tao Huang
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+
+I) Remove any CBG that is missing > 4 weeks of time entries....ok
+
+II) *Extract outliers from the heatmaps over each CBG and plot together the Zeta_i(t) timeseries for those CBG*
+○ Define CBG ‘outliers’ in the heatmaps as CBG that show their DoD_i(t) change a lot from day to day, e.g. go from dark blue to white
+
+已经删去包含NA+样本量少的cbg 剩下的datasets：
+
+aj_v0_la_sd_after01
+aj_v1_la_sd_after01
+
+--extract outlier to plot:
+(1.time series for zeta.
+ 2.heatmap for dod.     )
+ 
+ 挖出有这段时间轨迹明显有outlier的那些cbg，单独做TS图和heatmap
+
+
+
+*挖出有这段时间轨迹明显有outlier的那些cbg，单独做TS图和heatmap*---------跳过先。。。。
+通过查看所有的cbg heatmap图，把那些颜色明显迥异的cbg取出。
+以时间为片断找outlier， 比如5月1日，哪一个cbg的值明显相比别的高出很多。像这样搜刮出每个有问题的cbg。
+但这样。。。挺麻烦的。
+
+
+
+============================================================
+==================aggregate to higher level=================
+
+III) Aggregated analysis of mobility variables
+General instructions for aggregating this_variable
+a. Levels of aggregation:
+i. 1 LA County
+ii. Census tracts
+iii. 272 Neighborhoods in LA County
+b. To aggregate:
+i. Sum all counts of # of devices from the CBG within the larger spatial area
+ii. Adjust the sample using the variable of interest and the device count, summed over the
+aggregated area:
+● aggregatedArea_adjusted_count =
+○ sum_over_aggregatedArea(this_variable_raw_count) / 
+○ sum_over_aggregatedArea(device_count)
+
+c.
+To compute after aggregating:
+i. Zeta_i(t) -- for each week
+ii. WoW_i(t)
+
+
+
+A. LAC level:  不再考虑cbg，只考虑date
+用adjust后的数据，这样避免的不同时间失衡的采样。
+>aggre方法：
+aggregatedArea_adjusted_count =sum_over_aggregatedArea(this_variable_raw_count) / sum_over_aggregatedArea(device_count)
+
+```{R}
+#v0_la_sd_after01
+#v1_la_sd_after01
+v0_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+v1_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+
+aj_v0_lac_sd <- v0_la_sd_after01[,sum(completely_home_device_count)/sum(device_count),by=start_date]
+aj_v1_lac_sd <- v1_la_sd_after01[,sum(completely_home_device_count)/sum(device_count),by=start_date]
+
+##caj
+caj_v0_lac_sd <- v0_la_sd_after01[,sum(completely_home_device_count)/sum(candidate_device_count),by=start_date]
+caj_v1_lac_sd <- v1_la_sd_after01[,sum(completely_home_device_count)/sum(candidate_device_count),by=start_date]
+
+
+```
+
+
+##aj
+```{R}
+
+#v0
+#以03/01为base
+#V1 相当于是 aj_completely_home_device_count的总和  #0.2588152 03/01 2020
+aj_v0_lac_sd<-aj_v0_lac_sd[start_date>='2020-03-01']
+aj_v0_lac_sd[,zeta_base:=0.2588152]
+aj_v0_lac_sd[,zeta_chdc:=V1/zeta_base]
+#aj_v0_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：0.2588152
+
+aj_v1_lac_sd<-aj_v1_lac_sd[start_date>='2020-05-10'   
+                           &start_date<'2021-04-01' ]
+aj_v1_lac_sd[,zeta_base:=0.2588152]
+aj_v1_lac_sd[,zeta_chdc:=V1/zeta_base]
+#aj_v1_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+```
+##caj
+```{R}
+#v0
+#以03/01为base
+#V1 相当于是 aj_completely_home_device_count的总和  #0.11816958 03/01 2020
+caj_v0_lac_sd<-caj_v0_lac_sd[start_date>='2020-03-01']
+caj_v0_lac_sd[,zeta_base:=0.11816958]
+caj_v0_lac_sd[,zeta_chdc:=V1/zeta_base]
+#caj_v0_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01：0.11816958
+caj_v1_lac_sd
+caj_v1_lac_sd<-caj_v1_lac_sd[start_date>='2020-05-10'
+                             &start_date<'2021-04-01']
+caj_v1_lac_sd[,zeta_base:=0.11816958]
+caj_v1_lac_sd[,zeta_chdc:=V1/zeta_base]
+#caj_v1_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+
+
+```
+
+
+#aj plot
+## DoD: Combine v0,v1
+```{R}
+
+aj_com_lac_sd<-rbind(aj_v0_lac_sd,aj_v1_lac_sd)
+aj_com_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+lac_dod_com <-aj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ dod_chdc, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001)%>%
+  layout(title = "Dod of 'completely_home_device_count' in LAC levels")  
+lac_dod_com
+
+lac_zeta_com <-aj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_chdc, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Zeta of 'completely_home_device_count' in LAC levels")  
+lac_zeta_com
+
+
+
+#daily rolling--mean zeta
+aj_roll_chdc<-rollmean(aj_com_lac_sd$zeta_chdc,k = 7,fill = NA, align = 'right')
+aj_com_lac_sd$aj_rollmean<-aj_roll_chdc
+
+lac_zeta_roll <-aj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ aj_rollmean, type = 'scatter', mode = 'lines',
+          alpha=1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Rolling mean Zeta of 'completely_home_device_count' in LAC levels")  
+lac_zeta_roll
+
+
+```
+
+
+##caj plot
+```{R}
+caj_com_lac_sd<-rbind(caj_v0_lac_sd,caj_v1_lac_sd)
+caj_com_lac_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+caj_lac_dod_com <-caj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ dod_chdc, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001)%>%
+  layout(title = "Caj_Dod of 'completely_home_device_count' in LAC levels") 
+caj_lac_dod_com
+
+caj_lac_zeta_com <-caj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_chdc, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Caj_zeta of 'completely_home_device_count' in LAC levels") 
+caj_lac_zeta_com
+
+
+
+#daily rolling--mean zeta
+caj_roll_chdc<-rollmean(caj_com_lac_sd$zeta_chdc,k = 7,fill = NA, align = 'right')
+caj_com_lac_sd$caj_rollmean<-caj_roll_chdc
+
+caj_lac_zeta_roll <-caj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ caj_rollmean, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Caj Rolling mean Zeta of 'completely_home_device_count' in LAC levels")  
+caj_lac_zeta_roll
+
+```
+
+
+#aj、caj两图放一个plot对比
+```{R}
+
+setnames(caj_com_lac_sd,'zeta_chdc','caj_zeta_chdc')
+
+##combine aj & caj
+aj_com_lac_sd[,caj_zeta_chdc:= caj_com_lac_sd$caj_zeta_chdc]
+
+
+caj_aj_lac_com<-aj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>% 
+  add_lines(y = ~ zeta_chdc, name= 'DC_zeta') %>%
+  add_lines(y = ~ caj_zeta_chdc, name = 'CDC_zeta') %>%
+  layout(title = "DC_Zeta vs. CDC_Zeta : 'completely_home_device_count' in LAC levels")
+
+caj_aj_lac_com
+
+
+
+
+# Contrast daily rolling--mean zeta 
+
+#combine
+caj_com_lac_sd[,aj_rollmean := aj_com_lac_sd$aj_rollmean]
+
+caj_lac_zeta_roll <-caj_com_lac_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>%
+  add_lines(y =~ aj_rollmean ,name = 'rollmean_DC_zeta') %>%
+  add_lines(y =~ caj_rollmean ,name = 'rollmean_CDC_zeta') %>%
+  layout(title = "rollmean_DC_Zeta vs. rollmean_CDC_Zeta : 'completely_home_device_count' in LAC levels")  
+caj_lac_zeta_roll
+
+
+```
+
+
+
+
+
+*by week:*
+Time-series for 'device_count'
+```{R}
+raw_v0<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+raw_v1<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+device_count_v0 <- raw_v0[,sum(device_count),by=start_date]
+device_count_v0<-device_count_v0[start_date>='2020-03-02']
+
+which_week_dc<-format(device_count_v0$start_date,format='%W')
+device_count_v0[,which_week:= which_week_dc]
+
+
+#sum the week
+device_count_v0[,device_count_sum:= sum(V1), by=.(which_week)]
+device_count_v0[,week:=weekdays(device_count_v0$start_date)]
+device_count_v0<-device_count_v0[week=='Monday']
+
+
+
+
+#for v1
+
+
+device_count_v1 <- raw_v1[,sum(device_count),by=start_date]
+device_count_v1<-device_count_v1[start_date>='2020-05-11'&
+                                   start_date<'2021-04-01']
+
+which_week_dc_v1<-format(device_count_v1$start_date,format='%W')
+device_count_v1[,which_week:= which_week_dc_v1]
+
+
+#sum the week
+device_count_v1[,device_count_sum:= sum(V1), by=.(which_week)]
+device_count_v1[,week:=weekdays(device_count_v1$start_date)]
+device_count_v1<-device_count_v1[week=='Monday']
+
+
+```
+##caj
+```{R}
+
+caj_device_count_v0 <- raw_v0[,sum(candidate_device_count),by=start_date]
+caj_device_count_v0<-caj_device_count_v0[start_date>='2020-03-02']
+
+caj_which_week_dc<-format(caj_device_count_v0$start_date,format='%W')
+caj_device_count_v0[,which_week:= caj_which_week_dc]
+
+
+#sum the week
+caj_device_count_v0[,device_count_sum:= sum(V1), by=.(which_week)]
+caj_device_count_v0[,week:=weekdays(caj_device_count_v0$start_date)]
+caj_device_count_v0<-caj_device_count_v0[week=='Monday']
+
+
+#for v1
+
+caj_device_count_v1 <- raw_v1[,sum(candidate_device_count),by=start_date]
+caj_device_count_v1<-caj_device_count_v1[start_date>='2020-05-11'
+                                         &start_date<'2021-04-01']
+
+caj_which_week_dc_v1<-format(caj_device_count_v1$start_date,format='%W')
+caj_device_count_v1[,which_week:= caj_which_week_dc_v1]
+
+
+#sum the week
+caj_device_count_v1[,device_count_sum:= sum(V1), by=.(which_week)]
+caj_device_count_v1[,week:=weekdays(caj_device_count_v1$start_date)]
+caj_device_count_v1<-caj_device_count_v1[week=='Monday']
+
+
+```
+#aj
+# combine them
+```{R}
+device_count_com<-rbind(device_count_v0, device_count_v1)
+
+dc_com <-device_count_com %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ device_count_sum, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "Week change of 'device_count_com'")
+dc_com
+```
+
+##caj
+```{R}
+caj_device_count_com<-rbind(caj_device_count_v0, caj_device_count_v1)
+
+caj_dc_com <-caj_device_count_com %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ device_count_sum, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "caj_Week change of 'device_count_com'")
+caj_dc_com
+
+
+```
+
+# device_count v.s.
+```{R}
+
+
+##combine aj & caj
+device_count_com[,caj_device_count_sum:= caj_device_count_com$device_count_sum]
+
+
+caj_aj_lac_dc<-device_count_com %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>% 
+  add_lines(y = ~ device_count_sum, name= 'DC_dc') %>%
+  add_lines(y = ~ caj_device_count_sum, name = 'CDC_dc') %>%
+  layout(title = "DC_dc vs. CDC_dc : 'device_count' in LAC levels")
+
+caj_aj_lac_dc
+
+```
+
+
+
+
+
+
+*Week Pattern~~~~~~Zeta*
+
+## week version of zeta time-series in LAC level
+### for v0 (v2.0)
+
+```{R}
+
+
+# C0  《---求出 LAC在3/02--3/08这一周的 所有cbg 总completely_home_device_count值，并且按周的方法adjust
+#easy法就是把aj_v0_la_sd_after01_wow_base所有已经按周adjust好的cbg求和。
+
+## Ct<-----3-08以后的同样每周把所有cbg求和
+
+##以下数据来自于 DA_01
+##zeta<-  Ct / C0
+#aj_v0_la_sd_after01_wow_base
+#aj_v0_la_sd_after01_wow_wp
+
+
+
+#aggregate
+# by=which_week 才是真总结了一周的week pattern
+aj_v0_lac_sd_wow<-v0_la_sd_after01[,sum(completely_home_device_count)/sum(device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v0_lac<-v0_la_sd_after01[,.(which_week,week,start_date)]
+date_v0_lac<-unique(date_v0_lac[week == 'Saturday'])
+
+aj_v0_lac_sd_wow_wp<-inner_join(aj_v0_lac_sd_wow,date_v0_lac, by='which_week',all.x=T)
+aj_v0_lac_sd_wow_wp
+
+#base ==0.2341496
+```
+
+### for v1 (v2.1)
+
+
+
+
+```{R}
+#v1
+#增加week版completely_home_device_count 和 week版 
+
+aj_v1_lac_sd_wow<-v1_la_sd_after01[,sum(completely_home_device_count)/sum(device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v1_lac<-v1_la_sd_after01[,.(which_week,week,start_date)]
+date_v1_lac<-unique(date_v1_lac[week == 'Saturday'])
+
+aj_v1_lac_sd_wow_wp<-inner_join(aj_v1_lac_sd_wow,date_v1_lac, by='which_week',all.x=T)
+
+```
+
+
+```{R}
+#for v0
+aj_v0_lac_sd_wow_wp[,zeta_achdc_w:=V1 / 0.2341496]
+#aj_v0_lac_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w))]
+
+
+
+
+#for v1
+##依然跟3/08 2020的数据比较：
+aj_v1_lac_sd_wow_wp[,zeta_achdc_w:=V1 / 0.2341496]
+#aj_v1_lac_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w))]
+
+
+```
+
+
+
+# combine them:
+```{R}
+
+aj_com_lac_sd_wow_wp<-rbind(aj_v0_lac_sd_wow_wp,aj_v1_lac_sd_wow_wp)
+#set wow
+aj_com_lac_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w))]
+
+
+
+lac_wow_com <-aj_com_lac_sd_wow_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ dod_achdc_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: wow of adjusted 'completely_home_device_count'")
+lac_wow_com
+
+
+lac_zeta_com_wp <-aj_com_lac_sd_wow_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_achdc_w, type = 'scatter', mode = 'lines',
+          alpha=0.5,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_LAC: zeta of adjusted 'completely_home_device_count'")
+lac_zeta_com_wp
+
+```
+
+
+
+####V.s.caj
+#caj
+```{R}
+
+#caj v0
+
+#aggregate
+caj_v0_lac_sd_wow <- v0_la_sd_after01[,sum(completely_home_device_count)/sum(candidate_device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v0_lac<-v0_la_sd_after01[,.(which_week,week,start_date)]
+date_v0_lac<-unique(date_v0_lac[week == 'Saturday'])
+
+caj_v0_lac_sd_wow_wp<-inner_join(caj_v0_lac_sd_wow,date_v0_lac,by='which_week',all.x=T)
+
+
+
+
+
+
+
+#caj v1
+
+#aggregate
+caj_v1_lac_sd_wow <- v1_la_sd_after01[,sum(completely_home_device_count)/sum(candidate_device_count),by=which_week]
+
+
+#添加日期轴，为了做时间序列。
+date_v1_lac<-v1_la_sd_after01[,.(which_week,week,start_date)]
+date_v1_lac<-unique(date_v1_lac[week == 'Saturday'])
+
+caj_v1_lac_sd_wow_wp<-inner_join(caj_v1_lac_sd_wow,date_v1_lac,by='which_week',all.x=T)
+
+
+
+
+
+
+#STEP2
+#for v0
+caj_v0_lac_sd_wow_wp[,caj_zeta_achdc_w:=V1 / 0.1092587]
+
+
+#for v1
+##依然跟3/08 2020的数据比较：
+caj_v1_lac_sd_wow_wp[,caj_zeta_achdc_w:=V1 / 0.1092587]
+
+caj_com_lac_sd_wow_wp<-rbind(caj_v0_lac_sd_wow_wp,caj_v1_lac_sd_wow_wp)
+
+```
+
+
+##vs. plot
+```{R}
+aj_com_lac_sd_wow_wp[,caj_zeta_achdc_w:= caj_com_lac_sd_wow_wp$caj_zeta_achdc_w]
+
+
+caj_aj_lac_wp <-aj_com_lac_sd_wow_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>% 
+  add_lines(y = ~ zeta_achdc_w, name= 'DC_zeta_wp') %>%
+  add_lines(y = ~ caj_zeta_achdc_w, name = 'CDC_zeta_wp') %>%
+  layout(title = "DC_dc vs. CDC_dc weekP: 'device_count' in LAC levels")
+caj_aj_lac_wp
+```
+
+
+
+
+
+## march 26（Assignment 4）：
+
+1. Note about how to aggregate CBG data to higher levels: ○ 
+
+# aggregatedArea_adjusted_count = population_aggregated_area*[sum_ove r_aggregatedArea(this_variable_raw_count) / sum_over_aggregatedArea(device_count)] 
+
+#因为我上面所用的变量本身就是adj过了的，所以想着不需要再整体adj一下。
+
+
+
+2. Re-run LA County aggregate analysis with
+○ March 1 2020 only baseline ○ candidate_device_count
+# v1（v2.1）以后以 2020 march 1为准
+
+# 然后v1和v2合并成一个整体time-series 图.
+
+■ Start by plotting timeseires of candidate_device_count next to device_count & share on Slack
+#用 caj 然后对比aj的结果，周五给老师看，看看用啥好。neighbor先用aj。
+
+
+*write csv*
+
+aj_com_lac_sd_s<-aj_com_lac_sd[,.(start_date,zeta_chdc,dod_chdc,caj_zeta_chdc)]
+aj_com_lac_sd_wow_wp_s<-aj_com_lac_sd_wow_wp[,.(start_date.x
+,zeta_achdc_w,caj_zeta_achdc_w,dod_achdc_w)]
+write.csv(aj_com_lac_sd_s,file = 'aj_com_lac_sd_s.csv')
+write.csv(aj_com_lac_sd_wow_wp_s,file = 'aj_com_lac_sd_wow_wp_s.csv')
+
+
+ 
+
+
+aj_com_lac_sd
+
+write.csv(aj_com_lac_sd,file = 'aj_com_lac_sd_chdc.csv')
+
+
+
+
+
+
+
+

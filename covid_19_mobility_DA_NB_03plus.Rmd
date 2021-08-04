@@ -1,0 +1,1079 @@
+---
+title: "covid_19_mobility_DA_NB_03plus"
+author: "Tao Huang"
+date: "4/13/2021"
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(tidycensus)
+library(sf)
+library(ggplot2)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+#median_percentage_time_home : 
+Median percentage of time we observed devices home versus observed at all during the time period.
+待在家里的时间所占的百分比的中位数。。。越大代表，人们花更多时间呆家里
+
+#full_time_work_behavior_devices ：
+Out of the device_count, the number of devices that spent greater than 6 hours at a location other than their home geohash-7 during the period of 8 am - 6 pm in local time.
+全职工作的人数，越大代表疫情仍然出去参加全职工作的人数。
+
+#distance_traveled_from_home：
+Median distance (in meters) traveled from the geohash-7 of the home by the devices included in the device_count during the time period (excluding any distances of 0). We first find the median for each device and then find the median across all of the devices.
+这段时间内，这个地区一个人出去的距离家里的中位数（m），越大代表这地方人普遍出门的地方越远
+
+
+
+
+
+
+
+
+
+
+# 1.%change_i(t) weekly aggregate timeseries for all neighborhoods--wp
+
+
+*prepare data*
+```{R}
+
+v0_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+v1_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+v0_la_sd_after01<-v0_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+v0_la_sd_after01<-v0_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+
+
+
+#CSA_nb
+CSA<-readRDS('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/CSA_crosswalk.rds')
+
+CSA$CSA_NAME<-gsub('[U]nincorporated - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('City of ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Los Angeles - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Silverlake','Silver Lake',CSA$CSA_NAME)
+
+CSA_nb<-as.data.table(CSA)
+CSA_nb<-CSA_nb[,.(GEOID_NEW,CSA_NAME)]
+
+
+```
+
+
+*remove rural_NB*
+```{R}
+
+##
+CSA_NB<-st_read('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/data/shapefiles/CSAs/Countywide_Statistical_Areas_(CSA).shp')
+
+CSA_NB$LABEL<-gsub('[U]nincorporated - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('City of ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Los Angeles - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Silverlake','Silver Lake',CSA_NB$LABEL)
+##for area
+area<-as.data.table(CSA_NB)
+area<-area[,.(LABEL,ShapeSTAre)]
+
+
+# for pop
+#tract pop~~~!!!
+tr_census<-get_acs(geography ='tract',
+          variables = 'B01003_001',
+          state = "CA",
+         survey = "acs5",
+         county = 'Los Angeles')
+
+tr_census<-as.data.table(tr_census)
+tr_census<-tr_census[,GEOID:=substring(tr_census$GEOID,2,12)]
+tr_census<-tr_census[,.(GEOID,estimate)]
+
+
+# nb_pop
+pop_nb<-merge(tr_census,CSA_nb,by.x= 'GEOID',by.y='GEOID_NEW',all.x = T)
+
+pop_nb<-pop_nb[,sum(estimate), by= CSA_NAME]
+
+rural_nb<-merge(pop_nb,area,by.x= 'CSA_NAME',by.y='LABEL',all.x = T)
+rural_nb[,population_density:= V1 / ShapeSTAre]
+
+
+rural_nb[order(population_density)] #remove all NB which population_density <= 1.0E-06  。共24个
+
+rural_nb<-rural_nb[population_density<1e-05]
+rural_nb<-as.vector(rural_nb$CSA_NAME)  
+rural_nb
+
+```
+
+```{R}
+### based on NB,merge them to get geo
+v0_la_sd_after01[,GEOID_NEW:=as.character(substring(v0_la_sd_after01$origin_census_block_group,1,10))]
+v0_la_sd_CSA<-merge(v0_la_sd_after01,CSA_nb,by='GEOID_NEW',all.x = T)
+
+##remove rural _NB
+v0_la_sd_CSA<-v0_la_sd_CSA[!(CSA_NAME %in% rural_nb)]
+
+#for v1
+v1_la_sd_after01[,GEOID_NEW:=as.character(substring(v1_la_sd_after01$origin_census_block_group,1,10))]
+v1_la_sd_CSA<-merge(v1_la_sd_after01,CSA_nb,by='GEOID_NEW',all.x = T)
+
+##remove rural _NB
+v1_la_sd_CSA<-v1_la_sd_CSA[!(CSA_NAME %in% rural_nb)]
+```
+
+
+
+*补充day pattern*
+# 1.1 median_percentage_time_home   ---mpth/dp
+
+```{R}
+#aggregate to NB：
+#V1就是 adj——completely_home_device_count --NB层面（建议之后改名）
+aj_v0_nb_sd_mpth<-v0_la_sd_CSA[,sum(median_percentage_time_home)/sum(device_count),by=.(CSA_NAME,start_date)]
+
+#本身有130个NA--row---直接删去这些行吧： sum(is.na(aj_v0_nb_sd_mpth$CSA_NAME))
+aj_v0_nb_sd_mpth<-na.omit(aj_v0_nb_sd_mpth)
+#sum(is.na(aj_v0_nb_sd_mpth$CSA_NAME))
+
+####base处有个大问题，跟LAC不同，NB是262条线，因此有262个不同的base（03/01），因此不能像LAC那样用固定值，要学cbg的办法。
+
+#v0
+#以03/01 2020为base
+#V1 相当于是 aj_completely_home_device_count的总和  
+aj_v0_nb_sd_mpth<-aj_v0_nb_sd_mpth[start_date>'2020-03-01']
+
+#merge base:start_date='2020-03-01'
+aj_v0_nb_sd_base<-aj_v0_nb_sd_mpth[start_date=='2020-03-02']  # 263 nb---base_value
+setnames(aj_v0_nb_sd_base,'V1', 'V1_base' )
+aj_v0_nb_sd_base<-aj_v0_nb_sd_base[,.(CSA_NAME,V1_base)]
+
+aj_v0_nb_sd_mpth<-merge(aj_v0_nb_sd_mpth,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v0_nb_sd_mpth[,zeta_mpth:=V1/V1_base]
+#aj_v0_nb_sd_mpth[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+##处理0值。。。
+#sum(is.na(aj_v0_nb_sd_mpth$zeta_chdc))
+
+
+
+
+
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01:aj_v0_nb_sd_base
+##aggre
+aj_v1_nb_sd_mpth<-v1_la_sd_CSA[,sum(median_percentage_time_home)/sum(device_count),by=.(CSA_NAME,start_date)]
+##删去NA
+#sum(is.na(aj_v1_nb_sd_mpth$CSA_NAME))
+aj_v1_nb_sd_mpth<-na.omit(aj_v1_nb_sd_mpth)
+
+aj_v1_nb_sd_mpth<-aj_v1_nb_sd_mpth[start_date>='2020-05-11']
+
+#merge with aj_v1_nb_sd_base
+aj_v1_nb_sd_mpth<-merge(aj_v1_nb_sd_mpth,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v1_nb_sd_mpth[,zeta_mpth:=V1/V1_base]
+#aj_v1_nb_sd_mpth[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+```
+
+```{R}
+
+aj_com_nb_sd_mpth<-rbind(aj_v0_nb_sd_mpth,aj_v1_nb_sd_mpth)
+#set dod
+aj_com_nb_sd_mpth<-aj_com_nb_sd_mpth[order(CSA_NAME,start_date)]
+#aj_com_nb_sd_mpth[,dod_chdc:=c(0,diff(zeta_chdc)), by=CSA_NAME]
+
+
+
+
+nb_zeta_com_mpth <-aj_com_nb_sd_mpth %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_mpth, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "zeta_com_mpth_neighborhood'") 
+nb_zeta_com_mpth
+
+```
+
+
+# 2.DP/full_time_work_behavior_devices   ftwbd
+
+
+
+```{R}
+#aggregate to NB：
+#V1就是 adj——completely_home_device_count --NB层面（建议之后改名）
+aj_v0_nb_sd_ftwbd<-v0_la_sd_CSA[,sum(full_time_work_behavior_devices)/sum(device_count),by=.(CSA_NAME,start_date)]
+
+#本身有130个NA--row---直接删去这些行吧： sum(is.na(aj_v0_nb_sd_ftwbd$CSA_NAME))
+aj_v0_nb_sd_ftwbd<-na.omit(aj_v0_nb_sd_ftwbd)
+#sum(is.na(aj_v0_nb_sd_ftwbd$CSA_NAME))
+
+####base处有个大问题，跟LAC不同，NB是262条线，因此有262个不同的base（03/01），因此不能像LAC那样用固定值，要学cbg的办法。
+
+#v0
+#以03/01 2020为base
+#V1 相当于是 aj_completely_home_device_count的总和  
+aj_v0_nb_sd_ftwbd<-aj_v0_nb_sd_ftwbd[start_date>'2020-03-01']
+
+#merge base:start_date='2020-03-01'
+aj_v0_nb_sd_base<-aj_v0_nb_sd_ftwbd[start_date=='2020-03-02']  # 263 nb---base_value
+setnames(aj_v0_nb_sd_base,'V1', 'V1_base' )
+aj_v0_nb_sd_base<-aj_v0_nb_sd_base[,.(CSA_NAME,V1_base)]
+
+aj_v0_nb_sd_ftwbd<-merge(aj_v0_nb_sd_ftwbd,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v0_nb_sd_ftwbd[,zeta_ftwbd:=V1/V1_base]
+#aj_v0_nb_sd_ftwbd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+##处理0值。。。
+#sum(is.na(aj_v0_nb_sd_ftwbd$zeta_chdc))
+
+
+
+
+
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01:aj_v0_nb_sd_base
+##aggre
+aj_v1_nb_sd_ftwbd<-v1_la_sd_CSA[,sum(full_time_work_behavior_devices)/sum(device_count),by=.(CSA_NAME,start_date)]
+##删去NA
+#sum(is.na(aj_v1_nb_sd_ftwbd$CSA_NAME))
+aj_v1_nb_sd_ftwbd<-na.omit(aj_v1_nb_sd_ftwbd)
+
+aj_v1_nb_sd_ftwbd<-aj_v1_nb_sd_ftwbd[start_date>='2020-05-11']
+
+#merge with aj_v1_nb_sd_base
+aj_v1_nb_sd_ftwbd<-merge(aj_v1_nb_sd_ftwbd,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v1_nb_sd_ftwbd[,zeta_ftwbd:=V1/V1_base]
+#aj_v1_nb_sd_ftwbd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+```
+
+```{R}
+
+aj_com_nb_sd_ftwbd<-rbind(aj_v0_nb_sd_ftwbd,aj_v1_nb_sd_ftwbd)
+#set dod
+aj_com_nb_sd_ftwbd<-aj_com_nb_sd_ftwbd[order(CSA_NAME,start_date)]
+#aj_com_nb_sd_ftwbd[,dod_chdc:=c(0,diff(zeta_chdc)), by=CSA_NAME]
+
+
+
+
+nb_zeta_com_ftwbd <-aj_com_nb_sd_ftwbd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_ftwbd, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "zeta_com_neighborhood'") 
+nb_zeta_com_ftwbd
+
+
+```
+
+
+
+# 3. dp / distance_traveled_from_home  ---dtrh
+
+
+```{R}
+
+#aggregate to NB：
+#V1就是 adj——completely_home_device_count --NB层面（建议之后改名）
+aj_v0_nb_sd_dtrh<-v0_la_sd_CSA[,sum(distance_traveled_from_home)/sum(device_count),by=.(CSA_NAME,start_date)]
+
+#本身有130个NA--row---直接删去这些行吧： sum(is.na(aj_v0_nb_sd_dtrh$CSA_NAME))
+aj_v0_nb_sd_dtrh<-na.omit(aj_v0_nb_sd_dtrh)
+#sum(is.na(aj_v0_nb_sd_dtrh$CSA_NAME))
+
+####base处有个大问题，跟LAC不同，NB是262条线，因此有262个不同的base（03/01），因此不能像LAC那样用固定值，要学cbg的办法。
+
+#v0
+#以03/01 2020为base
+#V1 相当于是 aj_completely_home_device_count的总和  
+aj_v0_nb_sd_dtrh<-aj_v0_nb_sd_dtrh[start_date>'2020-03-01']
+
+#merge base:start_date='2020-03-01'
+aj_v0_nb_sd_base<-aj_v0_nb_sd_dtrh[start_date=='2020-03-02']  # 263 nb---base_value
+setnames(aj_v0_nb_sd_base,'V1', 'V1_base' )
+aj_v0_nb_sd_base<-aj_v0_nb_sd_base[,.(CSA_NAME,V1_base)]
+
+aj_v0_nb_sd_dtrh<-merge(aj_v0_nb_sd_dtrh,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v0_nb_sd_dtrh[,zeta_dtrh:=V1/V1_base]
+#aj_v0_nb_sd_dtrh[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+##处理0值。。。
+#sum(is.na(aj_v0_nb_sd_dtrh$zeta_chdc))
+
+
+
+
+
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01:aj_v0_nb_sd_base
+##aggre
+aj_v1_nb_sd_dtrh<-v1_la_sd_CSA[,sum(distance_traveled_from_home)/sum(device_count),by=.(CSA_NAME,start_date)]
+##删去NA
+#sum(is.na(aj_v1_nb_sd_dtrh$CSA_NAME))
+aj_v1_nb_sd_dtrh<-na.omit(aj_v1_nb_sd_dtrh)
+
+aj_v1_nb_sd_dtrh<-aj_v1_nb_sd_dtrh[start_date>='2020-05-11']
+
+#merge with aj_v1_nb_sd_base
+aj_v1_nb_sd_dtrh<-merge(aj_v1_nb_sd_dtrh,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v1_nb_sd_dtrh[,zeta_dtrh:=V1/V1_base]
+#aj_v1_nb_sd_dtrh[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+```
+
+```{R}
+
+aj_com_nb_sd_dtrh<-rbind(aj_v0_nb_sd_dtrh,aj_v1_nb_sd_dtrh)
+#set dod
+aj_com_nb_sd_dtrh<-aj_com_nb_sd_dtrh[order(CSA_NAME,start_date)]
+#aj_com_nb_sd_dtrh[,dod_chdc:=c(0,diff(zeta_chdc)), by=CSA_NAME]
+
+
+
+
+nb_zeta_com_dtrh <-aj_com_nb_sd_dtrh %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_dtrh, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "zeta_com_neighborhood'") 
+nb_zeta_com_dtrh
+
+
+```
+
+
+```{R}
+
+
+```
+
+
+```{R}
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+*week pattern*
+
+## 1.1 median_percentage_time_home   ---mpth
+```{R}
+
+aj_v0_nb_sd_wow_mpth <- v0_la_sd_CSA[,sum(median_percentage_time_home)/sum(device_count),by=.(CSA_NAME,which_week)]
+#add date
+date_v0_nb<-v0_la_sd_CSA[,.(which_week,week,start_date)]
+date_v0_nb<-unique(date_v0_nb[week == 'Saturday'])
+
+
+aj_v0_nb_sd_wow_wp_mpth<-inner_join(aj_v0_nb_sd_wow_mpth,date_v0_nb, by='which_week',all.x=T)
+aj_v0_nb_sd_wow_wp_mpth
+#base  ---2020/03-08 the first week of March 
+
+
+
+#for v1
+aj_v1_nb_sd_wow_mpth <- v1_la_sd_CSA[,sum(median_percentage_time_home)/sum(device_count),by=.(CSA_NAME,which_week)]
+
+#添加日期轴，为了做时间序列。
+date_v1_nb<-v1_la_sd_CSA[,.(which_week,week,start_date)]
+date_v1_nb<-unique(date_v1_nb[week == 'Saturday'])
+
+aj_v1_nb_sd_wow_wp_mpth<-inner_join(aj_v1_nb_sd_wow_mpth,date_v1_nb, by='which_week',all.x=T)
+
+```
+
+```{R}
+sum(is.na(aj_v0_nb_sd_wow_wp_mpth$CSA_NAME))
+aj_v0_nb_sd_wow_wp_mpth<-na.omit(aj_v0_nb_sd_wow_wp_mpth)
+aj_v0_nb_sd_wow_wp_mpth<-as.data.table(aj_v0_nb_sd_wow_wp_mpth)
+
+
+##set baseline
+aj_v0_nb_sd_wow_wp_base_mpth<-aj_v0_nb_sd_wow_wp_mpth[start_date=='2020-03-07']
+setnames(aj_v0_nb_sd_wow_wp_base_mpth,'V1', 'V1_base' )
+#merge with baseline
+aj_v0_nb_sd_wow_wp_mpth<-inner_join(aj_v0_nb_sd_wow_wp_mpth,aj_v0_nb_sd_wow_wp_base_mpth, by = 'CSA_NAME',all.x=T)
+aj_v0_nb_sd_wow_wp_mpth<-as.data.table(aj_v0_nb_sd_wow_wp_mpth)
+
+#zeta
+###----V1_base 是base    /v2.1也将跟这个比较
+aj_v0_nb_sd_wow_wp_mpth[,zeta_mpth_w:=V1 / V1_base]
+#aj_v0_nb_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w)),, by=CSA_NAME]
+
+
+
+
+
+#for v1
+#sum(is.na(aj_v1_nb_sd_wow_wp_mpth$CSA_NAME))
+aj_v1_nb_sd_wow_wp_mpth<-na.omit(aj_v1_nb_sd_wow_wp_mpth)
+aj_v1_nb_sd_wow_wp_mpth<-as.data.table(aj_v1_nb_sd_wow_wp_mpth)
+##merge
+aj_v1_nb_sd_wow_wp_mpth<-inner_join(aj_v1_nb_sd_wow_wp_mpth,aj_v0_nb_sd_wow_wp_base_mpth, by='CSA_NAME',all.x=T)
+
+aj_v1_nb_sd_wow_wp_mpth<-as.data.table(aj_v1_nb_sd_wow_wp_mpth)
+aj_v1_nb_sd_wow_wp_mpth[,zeta_mpth_w:=V1 / V1_base]
+```
+
+
+```{R}
+aj_com_nb_sd_wow_wp_mpth<-rbind(aj_v0_nb_sd_wow_wp_mpth,aj_v1_nb_sd_wow_wp_mpth)
+#set wow
+aj_com_nb_sd_wow_wp_mpth<-aj_com_nb_sd_wow_wp_mpth[order(CSA_NAME,start_date.x)]
+#aj_com_nb_sd_wow_wp_mpth[,wow_mpth_w:=c(0,diff(zeta_achdc_w)), by=CSA_NAME]
+
+nb_zeta_com_wp_mpth <-aj_com_nb_sd_wow_wp_mpth %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_mpth_w, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: zeta of adjusted 'median_percentage_time_home'")
+
+nb_zeta_com_wp_mpth
+
+#write.csv(aj_com_nb_sd_wow_wp_mpth,'aj_com_nb_sd_wow_wp_mpth.csv',row.names = F)
+```
+
+
+
+
+## 1.2 full_time_work_behavior_devices    ---ftwbd
+```{R}
+
+aj_v0_nb_sd_wow_ftwbd <- v0_la_sd_CSA[,sum(full_time_work_behavior_devices)/sum(device_count),by=.(CSA_NAME,which_week)]
+#add date
+date_v0_nb<-v0_la_sd_CSA[,.(which_week,week,start_date)]
+date_v0_nb<-unique(date_v0_nb[week == 'Saturday'])
+
+
+aj_v0_nb_sd_wow_wp_ftwbd<-inner_join(aj_v0_nb_sd_wow_ftwbd,date_v0_nb, by='which_week',all.x=T)
+aj_v0_nb_sd_wow_wp_ftwbd
+#base  ---2020/03-08 the first week of March 
+
+
+
+#for v1
+aj_v1_nb_sd_wow_ftwbd <- v1_la_sd_CSA[,sum(full_time_work_behavior_devices)/sum(device_count),by=.(CSA_NAME,which_week)]
+
+#添加日期轴，为了做时间序列。
+date_v1_nb<-v1_la_sd_CSA[,.(which_week,week,start_date)]
+date_v1_nb<-unique(date_v1_nb[week == 'Saturday'])
+
+aj_v1_nb_sd_wow_wp_ftwbd<-inner_join(aj_v1_nb_sd_wow_ftwbd,date_v1_nb, by='which_week',all.x=T)
+
+```
+
+```{R}
+sum(is.na(aj_v0_nb_sd_wow_wp_ftwbd$CSA_NAME))
+aj_v0_nb_sd_wow_wp_ftwbd<-na.omit(aj_v0_nb_sd_wow_wp_ftwbd)
+aj_v0_nb_sd_wow_wp_ftwbd<-as.data.table(aj_v0_nb_sd_wow_wp_ftwbd)
+
+
+##set baseline
+aj_v0_nb_sd_wow_wp_base_ftwbd<-aj_v0_nb_sd_wow_wp_ftwbd[start_date=='2020-03-07']
+setnames(aj_v0_nb_sd_wow_wp_base_ftwbd,'V1', 'V1_base' )
+#merge with baseline
+aj_v0_nb_sd_wow_wp_ftwbd<-inner_join(aj_v0_nb_sd_wow_wp_ftwbd,aj_v0_nb_sd_wow_wp_base_ftwbd, by = 'CSA_NAME',all.x=T)
+aj_v0_nb_sd_wow_wp_ftwbd<-as.data.table(aj_v0_nb_sd_wow_wp_ftwbd)
+
+#zeta
+###----V1_base 是base    /v2.1也将跟这个比较
+aj_v0_nb_sd_wow_wp_ftwbd[,zeta_ftwbd_w:=V1 / V1_base]
+#aj_v0_nb_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w)),, by=CSA_NAME]
+
+
+
+
+
+#for v1
+#sum(is.na(aj_v1_nb_sd_wow_wp_ftwbd$CSA_NAME))
+aj_v1_nb_sd_wow_wp_ftwbd<-na.omit(aj_v1_nb_sd_wow_wp_ftwbd)
+aj_v1_nb_sd_wow_wp_ftwbd<-as.data.table(aj_v1_nb_sd_wow_wp_ftwbd)
+##merge
+aj_v1_nb_sd_wow_wp_ftwbd<-inner_join(aj_v1_nb_sd_wow_wp_ftwbd,aj_v0_nb_sd_wow_wp_base_ftwbd, by='CSA_NAME',all.x=T)
+
+aj_v1_nb_sd_wow_wp_ftwbd<-as.data.table(aj_v1_nb_sd_wow_wp_ftwbd)
+aj_v1_nb_sd_wow_wp_ftwbd[,zeta_ftwbd_w:=V1 / V1_base]
+```
+
+
+```{R}
+aj_com_nb_sd_wow_wp_ftwbd<-rbind(aj_v0_nb_sd_wow_wp_ftwbd,aj_v1_nb_sd_wow_wp_ftwbd)
+#set wow
+aj_com_nb_sd_wow_wp_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[order(CSA_NAME,start_date.x)]
+#aj_com_nb_sd_wow_wp_ftwbd[,wow_mpth_w:=c(0,diff(zeta_achdc_w)), by=CSA_NAME]
+
+nb_zeta_com_wp_ftwbd <-aj_com_nb_sd_wow_wp_ftwbd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_ftwbd_w, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: zeta of adjusted 'full_time_work_behavior_devices'")
+
+nb_zeta_com_wp_ftwbd
+
+#write.csv(aj_com_nb_sd_wow_wp_ftwbd,'aj_com_nb_sd_wow_wp_ftwbd.csv',row.names = F)
+
+
+```
+
+### part time work..... add~~
+
+
+
+## 1.3 distance_traveled_from_home  ---dtrh
+```{R}
+
+aj_v0_nb_sd_wow_dtrh <- v0_la_sd_CSA[,sum(distance_traveled_from_home)/sum(device_count),by=.(CSA_NAME,which_week)]
+#add date
+date_v0_nb<-v0_la_sd_CSA[,.(which_week,week,start_date)]
+date_v0_nb<-unique(date_v0_nb[week == 'Saturday'])
+
+
+aj_v0_nb_sd_wow_wp_dtrh<-inner_join(aj_v0_nb_sd_wow_dtrh,date_v0_nb, by='which_week',all.x=T)
+aj_v0_nb_sd_wow_wp_dtrh
+#base  ---2020/03-08 the first week of March 
+
+
+
+#for v1
+aj_v1_nb_sd_wow_dtrh <- v1_la_sd_CSA[,sum(distance_traveled_from_home)/sum(device_count),by=.(CSA_NAME,which_week)]
+
+#添加日期轴，为了做时间序列。
+date_v1_nb<-v1_la_sd_CSA[,.(which_week,week,start_date)]
+date_v1_nb<-unique(date_v1_nb[week == 'Saturday'])
+
+aj_v1_nb_sd_wow_wp_dtrh<-inner_join(aj_v1_nb_sd_wow_dtrh,date_v1_nb, by='which_week',all.x=T)
+
+
+
+```
+
+```{R}
+sum(is.na(aj_v0_nb_sd_wow_wp_dtrh$CSA_NAME))
+aj_v0_nb_sd_wow_wp_dtrh<-na.omit(aj_v0_nb_sd_wow_wp_dtrh)
+aj_v0_nb_sd_wow_wp_dtrh<-as.data.table(aj_v0_nb_sd_wow_wp_dtrh)
+
+
+##set baseline
+aj_v0_nb_sd_wow_wp_base_dtrh<-aj_v0_nb_sd_wow_wp_dtrh[start_date=='2020-03-07']
+setnames(aj_v0_nb_sd_wow_wp_base_dtrh,'V1', 'V1_base' )
+#merge with baseline
+aj_v0_nb_sd_wow_wp_dtrh<-inner_join(aj_v0_nb_sd_wow_wp_dtrh,aj_v0_nb_sd_wow_wp_base_dtrh, by = 'CSA_NAME',all.x=T)
+aj_v0_nb_sd_wow_wp_dtrh<-as.data.table(aj_v0_nb_sd_wow_wp_dtrh)
+
+#zeta
+###----V1_base 是base    /v2.1也将跟这个比较
+aj_v0_nb_sd_wow_wp_dtrh[,zeta_dtrh_w:=V1 / V1_base]
+#aj_v0_nb_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w)),, by=CSA_NAME]
+
+
+
+
+
+#for v1
+#sum(is.na(aj_v1_nb_sd_wow_wp_mpth$CSA_NAME))
+aj_v1_nb_sd_wow_wp_dtrh<-na.omit(aj_v1_nb_sd_wow_wp_dtrh)
+aj_v1_nb_sd_wow_wp_dtrh<-as.data.table(aj_v1_nb_sd_wow_wp_dtrh)
+##merge
+aj_v1_nb_sd_wow_wp_dtrh<-inner_join(aj_v1_nb_sd_wow_wp_dtrh,aj_v0_nb_sd_wow_wp_base_dtrh, by='CSA_NAME',all.x=T)
+
+aj_v1_nb_sd_wow_wp_dtrh<-as.data.table(aj_v1_nb_sd_wow_wp_dtrh)
+aj_v1_nb_sd_wow_wp_dtrh[,zeta_dtrh_w:=V1 / V1_base]
+```
+
+
+```{R}
+aj_com_nb_sd_wow_wp_dtrh<-rbind(aj_v0_nb_sd_wow_wp_dtrh,aj_v1_nb_sd_wow_wp_dtrh)
+#set wow
+aj_com_nb_sd_wow_wp_dtrh<-aj_com_nb_sd_wow_wp_dtrh[order(CSA_NAME,start_date.x)]
+#aj_com_nb_sd_wow_wp_mpth[,wow_mpth_w:=c(0,diff(zeta_achdc_w)), by=CSA_NAME]
+
+
+#aj_com_nb_sd_wow_wp_dtrh[order(zeta_dtrh_w , decreasing = T)]
+##remove University Park	  #extreme high!!
+aj_com_nb_sd_wow_wp_dtrh<-aj_com_nb_sd_wow_wp_dtrh[!(CSA_NAME=='University Park')]
+
+
+nb_zeta_com_wp_dtrh <-aj_com_nb_sd_wow_wp_dtrh %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_dtrh_w, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: zeta of adjusted 'distance'")
+
+nb_zeta_com_wp_dtrh
+
+#write.csv(aj_com_nb_sd_wow_wp_dtrh,'aj_com_nb_sd_wow_wp_dtrh.csv',row.names = F)
+
+
+```
+
+
+# 2.Mapping (Neighborhood level)
+*prepare*
+```{R}
+CSA_NB<-st_read('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/data/shapefiles/CSAs/Countywide_Statistical_Areas_(CSA).shp')
+
+CSA_NB$LABEL<-gsub('[U]nincorporated - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('City of ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Los Angeles - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Silverlake','Silver Lake',CSA_NB$LABEL)
+
+
+```
+
+## 2.1 median_percentage_time_home   ---mpth
+```{R}
+#nb_wp3_mpth
+nb_wp3_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-03-07']
+nb_wp3_mpth<-nb_wp3_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp3_mpth,'CSA_NAME','LABEL')
+nb_wp3_mpth<-as.data.frame(nb_wp3_mpth)
+#map_nb_wp3
+map_nb_wp3_mpth<-inner_join(CSA_NB,nb_wp3_mpth)
+
+
+
+
+#nb_wp4_mpth
+nb_wp4_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-04-04']
+nb_wp4_mpth<-nb_wp4_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp4_mpth,'CSA_NAME','LABEL')
+nb_wp4_mpth<-as.data.frame(nb_wp4_mpth)
+#map_nb_wp4
+map_nb_wp4_mpth<-inner_join(CSA_NB,nb_wp4_mpth)
+
+
+#nb_wp5_mpth
+nb_wp5_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-05-02']
+nb_wp5_mpth<-nb_wp5_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp5_mpth,'CSA_NAME','LABEL')
+nb_wp5_mpth<-as.data.frame(nb_wp5_mpth)
+#map_nb_wp4
+map_nb_wp5_mpth<-inner_join(CSA_NB,nb_wp5_mpth)
+
+
+
+
+#nb_wp7_mpth
+nb_wp7_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-07-04']
+nb_wp7_mpth<-nb_wp7_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp7_mpth,'CSA_NAME','LABEL')
+nb_wp7_mpth<-as.data.frame(nb_wp7_mpth)
+#map_nb_wp4
+map_nb_wp7_mpth<-inner_join(CSA_NB,nb_wp7_mpth)
+
+
+
+
+#nb_wp9_mpth
+nb_wp9_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-09-05']
+nb_wp9_mpth<-nb_wp9_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp9_mpth,'CSA_NAME','LABEL')
+nb_wp9_mpth<-as.data.frame(nb_wp9_mpth)
+#map_nb_wp4
+map_nb_wp9_mpth<-inner_join(CSA_NB,nb_wp9_mpth)
+
+
+
+
+
+
+#nb_wp11_mpth
+nb_wp11_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2020-11-07']
+nb_wp11_mpth<-nb_wp11_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp11_mpth,'CSA_NAME','LABEL')
+nb_wp11_mpth<-as.data.frame(nb_wp11_mpth)
+#map_nb_wp4
+map_nb_wp11_mpth<-inner_join(CSA_NB,nb_wp11_mpth)
+
+
+
+
+#nb_wp13_mpth
+nb_wp13_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2021-01-02']
+nb_wp13_mpth<-nb_wp13_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp13_mpth,'CSA_NAME','LABEL')
+nb_wp13_mpth<-as.data.frame(nb_wp13_mpth)
+#map_nb_wp4
+map_nb_wp13_mpth<-inner_join(CSA_NB,nb_wp13_mpth)
+
+#nb_wp14_mpth
+nb_wp14_mpth<-aj_com_nb_sd_wow_wp_mpth[start_date.x=='2021-02-06']
+nb_wp14_mpth<-nb_wp14_mpth[,.(CSA_NAME,zeta_mpth_w)]
+setnames(nb_wp14_mpth,'CSA_NAME','LABEL')
+nb_wp14_mpth<-as.data.frame(nb_wp14_mpth)
+#map_nb_wp4
+map_nb_wp14_mpth<-inner_join(CSA_NB,nb_wp14_mpth)
+
+
+
+```
+
+```{R}
+#at = c(0,1,1.5,2,2.5,3,3.5,4,4.5,5,50)
+#MAP 
+map_nb_wp3_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-03_baseline_MPTH") 
+
+map_nb_wp4_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5),legend = TRUE
+          ,layer.name = "2020-04_%change_MPTH") 
+
+map_nb_wp5_mpth %>%
+  mapview(zcol = "zeta_mpth_w", at = c(0,1,1.5,2,2.5,3,4,5),legend = TRUE
+          ,layer.name = "2020-05_%change_MPTH") 
+
+map_nb_wp7_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5),legend = TRUE
+          ,layer.name = "2020-07_%change_MPTH") 
+
+
+```
+
+```{R}
+map_nb_wp9_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-09_%change_MPTH") 
+
+map_nb_wp11_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-11_%change_MPTH") 
+
+
+map_nb_wp13_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5),legend = TRUE
+          ,layer.name = "2021-01_%change_MPTH") 
+
+
+map_nb_wp14_mpth %>% 
+  mapview(zcol = "zeta_mpth_w",  at = c(0,1,1.5,2,2.5,3,4,5),legend = TRUE
+          ,layer.name = "2021-02_%change_MPTH") 
+
+```
+
+
+
+## 2.2 full_time_work_behavior_devices    ---ftwbd
+
+```{R}
+#nb_wp3_ftwbd
+nb_wp3_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-03-07']
+nb_wp3_ftwbd<-nb_wp3_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp3_ftwbd,'CSA_NAME','LABEL')
+nb_wp3_ftwbd<-as.data.frame(nb_wp3_ftwbd)
+#map_nb_wp3_ftwbd
+map_nb_wp3_ftwbd<-inner_join(CSA_NB,nb_wp3_ftwbd)
+
+
+
+
+#nb_wp4_ftwbd
+nb_wp4_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-04-04']
+nb_wp4_ftwbd<-nb_wp4_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp4_ftwbd,'CSA_NAME','LABEL')
+nb_wp4_ftwbd<-as.data.frame(nb_wp4_ftwbd)
+#map_nb_wp4_ftwbd
+map_nb_wp4_ftwbd<-inner_join(CSA_NB,nb_wp4_ftwbd)
+
+
+#nb_wp5_ftwbd
+nb_wp5_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-05-02']
+nb_wp5_ftwbd<-nb_wp5_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp5_ftwbd,'CSA_NAME','LABEL')
+nb_wp5_ftwbd<-as.data.frame(nb_wp5_ftwbd)
+#map_nb_wp5_ftwbd
+map_nb_wp5_ftwbd<-inner_join(CSA_NB,nb_wp5_ftwbd)
+
+
+
+
+#nb_wp7_ftwbd
+nb_wp7_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-07-04']
+nb_wp7_ftwbd<-nb_wp7_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp7_ftwbd,'CSA_NAME','LABEL')
+nb_wp7_ftwbd<-as.data.frame(nb_wp7_ftwbd)
+#map_nb_wp7_ftwbd
+map_nb_wp7_ftwbd<-inner_join(CSA_NB,nb_wp7_ftwbd)
+
+
+
+
+#nb_wp9_ftwbd
+nb_wp9_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-09-05']
+nb_wp9_ftwbd<-nb_wp9_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp9_ftwbd,'CSA_NAME','LABEL')
+nb_wp9_ftwbd<-as.data.frame(nb_wp9_ftwbd)
+#map_nb_wp9_ftwbd
+map_nb_wp9_ftwbd<-inner_join(CSA_NB,nb_wp9_ftwbd)
+
+
+
+
+
+
+#nb_wp11_ftwbd
+nb_wp11_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2020-11-07']
+nb_wp11_ftwbd<-nb_wp11_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp11_ftwbd,'CSA_NAME','LABEL')
+nb_wp11_ftwbd<-as.data.frame(nb_wp11_ftwbd)
+#map_nb_wp11_ftwbd
+map_nb_wp11_ftwbd<-inner_join(CSA_NB,nb_wp11_ftwbd)
+
+
+
+
+#nb_wp13_ftwbd
+nb_wp13_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2021-01-02']
+nb_wp13_ftwbd<-nb_wp13_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp13_ftwbd,'CSA_NAME','LABEL')
+nb_wp13_ftwbd<-as.data.frame(nb_wp13_ftwbd)
+#map_nb_wp4
+map_nb_wp13_ftwbd<-inner_join(CSA_NB,nb_wp13_ftwbd)
+
+#nb_wp14_ftwbd
+nb_wp14_ftwbd<-aj_com_nb_sd_wow_wp_ftwbd[start_date.x=='2021-02-06']
+nb_wp14_ftwbd<-nb_wp14_ftwbd[,.(CSA_NAME,zeta_ftwbd_w)]
+setnames(nb_wp14_ftwbd,'CSA_NAME','LABEL')
+nb_wp14_ftwbd<-as.data.frame(nb_wp14_ftwbd)
+#map_nb_wp4
+map_nb_wp14_ftwbd<-inner_join(CSA_NB,nb_wp14_ftwbd)
+
+
+
+```
+
+```{R}
+#MAP 
+map_nb_wp3_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w",  at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-03_baseline_FTWBD") 
+
+map_nb_wp4_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w",  at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-04_%change_FTWBD") 
+
+map_nb_wp5_ftwbd %>%
+  mapview(zcol = "zeta_ftwbd_w", at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-05_%change_FTWBD") 
+
+map_nb_wp7_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w",at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-07_%change_FTWBD") 
+
+
+```
+
+```{R}
+map_nb_wp9_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w",at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-09_%change_FTWBD") 
+
+map_nb_wp11_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w",at = c(0,0.25,0.5,0.75,1,2), legend = TRUE
+          ,layer.name = "2020-11_%change_FTWBD") 
+
+
+map_nb_wp13_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w", at = c(0,0.25,0.5,0.75,1,2),legend = TRUE
+          ,layer.name = "2021-01_%change_FTWBD") 
+
+
+map_nb_wp14_ftwbd %>% 
+  mapview(zcol = "zeta_ftwbd_w", at = c(0,0.25,0.5,0.75,1,2),legend = TRUE
+          ,layer.name = "2021-02_%change_FTWBD") 
+
+
+```
+
+
+
+## 2.3 distance_traveled_from_home     ---dtrh
+
+```{R}
+#nb_wp3_dtrh
+nb_wp3_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-03-07']
+nb_wp3_dtrh<-nb_wp3_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp3_dtrh,'CSA_NAME','LABEL')
+nb_wp3_dtrh<-as.data.frame(nb_wp3_dtrh)
+#map_nb_wp3_dtrh
+map_nb_wp3_dtrh<-inner_join(CSA_NB,nb_wp3_dtrh)
+
+
+
+
+#nb_wp4_dtrh
+nb_wp4_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-04-04']
+nb_wp4_dtrh<-nb_wp4_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp4_dtrh,'CSA_NAME','LABEL')
+nb_wp4_dtrh<-as.data.frame(nb_wp4_dtrh)
+#map_nb_wp4_dtrh
+map_nb_wp4_dtrh<-inner_join(CSA_NB,nb_wp4_dtrh)
+
+
+#nb_wp5_dtrh
+nb_wp5_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-05-02']
+nb_wp5_dtrh<-nb_wp5_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp5_dtrh,'CSA_NAME','LABEL')
+nb_wp5_dtrh<-as.data.frame(nb_wp5_dtrh)
+#map_nb_wp5_dtrh
+map_nb_wp5_dtrh<-inner_join(CSA_NB,nb_wp5_dtrh)
+
+
+
+
+#nb_wp7_dtrh
+nb_wp7_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-07-04']
+nb_wp7_dtrh<-nb_wp7_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp7_dtrh,'CSA_NAME','LABEL')
+nb_wp7_dtrh<-as.data.frame(nb_wp7_dtrh)
+#map_nb_wp7_dtrh
+map_nb_wp7_dtrh<-inner_join(CSA_NB,nb_wp7_dtrh)
+
+
+
+
+#nb_wp9_dtrh
+nb_wp9_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-09-05']
+nb_wp9_dtrh<-nb_wp9_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp9_dtrh,'CSA_NAME','LABEL')
+nb_wp9_dtrh<-as.data.frame(nb_wp9_dtrh)
+#map_nb_wp9_dtrh
+map_nb_wp9_dtrh<-inner_join(CSA_NB,nb_wp9_dtrh)
+
+
+
+
+
+
+#nb_wp11_dtrh
+nb_wp11_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2020-11-07']
+nb_wp11_dtrh<-nb_wp11_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp11_dtrh,'CSA_NAME','LABEL')
+nb_wp11_dtrh<-as.data.frame(nb_wp11_dtrh)
+#map_nb_wp11_dtrh
+map_nb_wp11_dtrh<-inner_join(CSA_NB,nb_wp11_dtrh)
+
+
+
+
+#nb_wp13_dtrh
+nb_wp13_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2021-01-02']
+nb_wp13_dtrh<-nb_wp13_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp13_dtrh,'CSA_NAME','LABEL')
+nb_wp13_dtrh<-as.data.frame(nb_wp13_dtrh)
+#map_nb_wp13_dtrh
+map_nb_wp13_dtrh<-inner_join(CSA_NB,nb_wp13_dtrh)
+
+#nb_wp14_dtrh
+nb_wp14_dtrh<-aj_com_nb_sd_wow_wp_dtrh[start_date.x=='2021-02-06']
+nb_wp14_dtrh<-nb_wp14_dtrh[,.(CSA_NAME,zeta_dtrh_w)]
+setnames(nb_wp14_dtrh,'CSA_NAME','LABEL')
+nb_wp14_dtrh<-as.data.frame(nb_wp14_dtrh)
+#map_nb_wp14_dtrh
+map_nb_wp14_dtrh<-inner_join(CSA_NB,nb_wp14_dtrh)
+
+
+
+```
+
+```{R}
+#MAP 
+map_nb_wp3_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w",  at = c(0,0.5,1,1.5,2,5,20), legend = TRUE
+          ,layer.name = "2020-03_baseline_DTRH") 
+
+map_nb_wp4_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w",  at = c(0,0.5,1,1.5,2,5,20),legend = TRUE
+          ,layer.name = "2020-04_%change_DTRH") 
+
+map_nb_wp5_dtrh %>%
+  mapview(zcol = "zeta_dtrh_w", at = c(0,0.5,1,1.5,2,5,20),legend = TRUE
+          ,layer.name = "2020-05_%change_DTRH") 
+
+map_nb_wp7_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w",  at = c(0,0.5,1,1.5,2,5,20),legend = TRUE
+          ,layer.name = "2020-07_%change_DTRH") 
+
+
+```
+
+```{R}
+map_nb_wp9_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w", at = c(0,0.5,1,1.5,2,5,20), legend = TRUE
+          ,layer.name = "2020-09_%change_DTRH") 
+
+map_nb_wp11_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w", at = c(0,0.5,1,1.5,2,5,20), legend = TRUE
+          ,layer.name = "2020-11_%change_DTRH") 
+
+
+map_nb_wp13_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w", at = c(0,0.5,1,1.5,2,5,20),legend = TRUE
+          ,layer.name = "2021-01_%change_DTRH") 
+
+
+map_nb_wp14_dtrh %>% 
+  mapview(zcol = "zeta_dtrh_w",at = c(0,0.5,1,1.5,2,5,20),legend = TRUE
+          ,layer.name = "2021-02_%change_DTRH") 
+
+
+```
+
+
+
+

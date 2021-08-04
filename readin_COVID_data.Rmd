@@ -1,0 +1,190 @@
+---
+title: "COVID-19 Daily Count from LA Times"
+Date: March 23 2021
+author: "Abigail Horn"
+output: html_document
+chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+#Load Libraries
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(readr)
+library(purrr)
+library(tibble)
+library(stringr)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(data.table)
+
+library(MASS)
+library(reshape2)
+library(reshape)
+
+library(network)
+
+library(tidygraph)
+library(ggraph)
+library(plotly)
+library(visNetwork)
+library(networkD3)
+library(here)
+
+lab.dir <- here("static/slides/11-interactive-viz/lab/")
+
+```
+
+
+#Load data
+```{r}
+
+case_data <- fread("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/latimes-place-totals.csv ")
+case_data<-as.data.frame(case_data)
+```
+
+
+
+```{R}
+case_data <- subset(case_data, county == "Los Angeles")
+case_data$date <- as.Date(case_data$date)
+case_data$name <- as.character(case_data$name)
+data <- case_data
+```
+
+#Create daily table total
+
+```{r}
+
+summary.LA <- data %>%
+ group_by(date) %>% 
+ summarise(confirmed_cases = sum(confirmed_cases)) %>%
+ ungroup()
+
+summary.LA
+
+summary.LA = summary.LA %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = confirmed_cases - lag(confirmed_cases)) # Difference in case between days 
+
+summary.LA
+
+```
+
+
+#Create daily table per City
+
+```{r}
+
+summary.city <- data %>%
+ group_by(date, name) %>% 
+ summarise(confirmed_cases = sum(confirmed_cases)) %>%
+ ungroup()
+
+summary.city
+
+```
+
+
+#Add number of new case per city
+
+```{r}
+
+summary.city = summary.city %>%
+  group_by(name) %>%
+  arrange(date) %>%  # first sort by day
+  mutate(Diff_day = date - lag(date),  # Difference in time (just in case there are gaps)
+         new_cases = confirmed_cases - lag(confirmed_cases)) %>% # Difference in case between days 
+ arrange(name)
+
+summary.city
+
+```
+
+
+## Plots {.tabset}
+
+### LA County
+
+```{r}
+
+LA.plot <- ggplot(data = summary.LA, aes(x = date, y = confirmed_cases)) + 
+  geom_line()
+
+ggplotly(LA.plot)
+
+```
+#
+
+### By City
+
+```{r}
+City.plot <- ggplot(data = subset(summary.city, name %in% c("Woodland Hills", "Sierra Madre")), aes(x = date, y = new_cases, color = name)) +
+  geom_line()
+
+ggplotly(City.plot)
+
+
+
+#
+City.plot <- ggplot(data = summary.city, aes(x = date, y = new_cases, color = name)) +
+  geom_line()
+
+ggplotly(City.plot)
+
+
+```
+
+{-}
+
+#Step 3: Plot COVID-19 infections by neighborhood
+● Read-in the COVID-19 infection data by neighborhood using my code “readin_COVID_data.Rmd” (in the COVID19_data folder)
+   
+   ○ The code will read-in the COVID-19 data for each neighborhood from the LA Times, and calculate the number of new infections each day from the number of cumulative infections
+
+● Calculate for    week the 7-day new infection incidence rate per 100,000 population (“1-week crude IR”), i.e.
+  ○ 1-week crude IR = [ sum(new infections in location i during 7 days) / population of I ] * 100,000 ● For each of the 8 weeks, plot the map of each neighborhood colored by the value of the 1-week crude
+IR
+
+###解释：
+代码用于从 累计infectious中 计算出的每日感染者   ：data： LA每日不同city的情况：confirmed_cases、population
+原数据是daily数据---
+
+
+summary.LA ： LA层面，每日新增。（confirmed_cases、new_cases）   --------》LA.plot
+summary.city ： city层面，每日新增。（name/city 、confirmed_cases、new_cases ） ------》City.plot 
+
+LA 88个cities ，和超过400个neighbors？？
+为何结果是352？？
+
+
+
+```{R}
+
+#data
+#summary.LA
+#summary.city
+##去重计数：n_distinct()
+
+n_distinct(data$name)
+
+unique(data)
+```
+
+
+
+
+```{r}
+
+#write_csv(data, "data.csv")
+
+```

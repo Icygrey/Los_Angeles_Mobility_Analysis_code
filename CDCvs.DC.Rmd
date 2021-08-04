@@ -1,0 +1,99 @@
+---
+title: "CDCvsDC"
+author: "Tao Huang"
+date: "4/8/2021"
+output: html_document
+chunk_output_type: console
+---
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+# LA county 
+```{R}
+aj_com_lac_sd_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/aj_com_lac_sd_s.csv')
+aj_com_lac_sd_wow_wp_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/aj_com_lac_sd_wow_wp_s.csv')
+
+
+```
+
+## 1.Day pattern: DC_Zeta vs. CDC_Zeta : 'completely_home_device_count' in LAC levels
+```{R}
+
+caj_aj_lac_com<-aj_com_lac_sd_s %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, line.width = 0.00001,span=0.00001) %>% 
+  add_lines(y = ~ zeta_chdc, name= 'DC_zeta') %>%
+  add_lines(y = ~ caj_zeta_chdc, name = 'CDC_zeta') %>%
+  layout(title = "DC_Zeta vs. CDC_Zeta : 'completely_home_device_count' in LAC levels")
+
+caj_aj_lac_com
+```
+
+## 2.Week pattern: DC_Zeta vs. CDC_Zeta : 'completely_home_device_count' in LAC levels
+```{R}
+  
+caj_aj_lac_wp <-aj_com_lac_sd_wow_wp_s %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, line.width = 0.00001,span=0.00001) %>% 
+  add_lines(y = ~ zeta_achdc_w, name= 'DC_zeta_wp') %>%
+  add_lines(y = ~ caj_zeta_achdc_w, name = 'CDC_zeta_wp') %>%
+  layout(title = "DC_dc vs. CDC_dc weekP: 'device_count' in LAC levels")
+caj_aj_lac_wp
+
+```
+
+
+
+# Neighborhood levels v.s.
+```{R}
+aj_com_nb_sd_wow_wp_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/aj_com_nb_sd_wow_wp_s.csv')
+caj_com_nb_sd_wow_wp_s<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/caj_com_nb_sd_wow_wp_s.csv')
+```
+
+## DC (Week)
+```{R}
+nb_zeta_com_wp <-aj_com_nb_sd_wow_wp_s %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x.x, y = ~ zeta_achdc_w, color = ~ factor(NEIGHBORHOOD_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: zeta of adjusted 'completely_home_device_count'")
+nb_zeta_com_wp
+
+
+
+```
+
+## CDC (Week)
+```{R}
+caj_nb_zeta_com_wp <-caj_com_nb_sd_wow_wp_s %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x.x, y = ~ zeta_achdc_w, color = ~ factor(NEIGHBORHOOD_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "CDC_com_week_P_NB: zeta of adjusted 'completely_home_device_count'")
+caj_nb_zeta_com_wp
+
+
+```
+
+
+
+

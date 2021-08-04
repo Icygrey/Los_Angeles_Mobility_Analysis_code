@@ -1,0 +1,607 @@
+---
+title: "covid_19_mobility_DA_NB_03"
+author: "Tao Huang"
+date: "3/31/2021"
+output: html_document
+chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(hrbrthemes)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(knitr)
+library(mapview)
+library(tidycensus)
+library(sf)
+library(ggplot2)
+library(zoo)
+
+
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  eval=TRUE,
+  echo = TRUE,
+  fig.width = 7, 
+  fig.align = 'center',
+  fig.asp = 0.618,
+  out.width = "700px")
+```
+
+
+
+
+# 0. prepare
+
+TRACT是可以根据FIPScode来，但是nb不是，我需要借助新的数据来辨别nb。
+
+GEOID 和 FIPS区别：
+geoid 10位数字(去头去尾) == tract number
+6037101210
+6: CA
+037: LA county
+101210：TRACT
+
+ps：neighbor一定是比tract更大的区域。（LA小几百个neighbor，几千个tract。）
+老版本数据里：neighbor可能就 263个。。现在估计不止了。   //tract 2000+个。 
+
+
+```{R}
+##合并它可以辨别NB
+v0_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v0_la_sd_after01.csv')
+v1_la_sd_after01<-fread('/Users/huangtao/Desktop/covid_19_keck_Research/research_code/v1_la_sd_after01.csv')
+
+
+#filename = "/Users/huangtao/Desktop/covid_19_keck_Research/NB_mapping/Zone_mappings.csv"
+#Zone_mappings <- read.csv(filename,sep=",",header=TRUE)
+# merge Zone_mappings得到我要的  NEIGHBORHOOD_NAME
+#Zone_mappings<-as.data.table(Zone_mappings)
+#Zone_mappings[,GEOID_NEW:=as.character(Zone_mappings$GEOID_NEW)]
+
+#test<-Zone_mappings[,.(GEOID_NEW,NEIGHBORHOOD_NAME,CITY_NAME,REGION_NAME)]
+#test
+#n_distinct(test)
+#n_distinct(Zone_mappings$NEIGHBORHOOD_NAME)
+#n_distinct(Zone_mappings$CITY_NAME)
+
+#test[NEIGHBORHOOD_NAME== 'San Pasqual']
+
+#GEOID_NEW  /  CSA_NAME
+CSA<-readRDS('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/CSA_crosswalk.rds')
+
+
+CSA$CSA_NAME<-gsub('[U]nincorporated - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('City of ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Los Angeles - ','',CSA$CSA_NAME)
+CSA$CSA_NAME<-gsub('Silverlake','Silver Lake',CSA$CSA_NAME)
+
+CSA_nb<-as.data.table(CSA)
+CSA_nb<-CSA_nb[,.(GEOID_NEW,CSA_NAME)]
+
+```
+
+*remove rural_NB*
+```{R}
+##remove rural NB
+##
+CSA_NB<-st_read('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/data/shapefiles/CSAs/Countywide_Statistical_Areas_(CSA).shp')
+
+CSA_NB$LABEL<-gsub('[U]nincorporated - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('City of ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Los Angeles - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Silverlake','Silver Lake',CSA_NB$LABEL)
+##for area
+area<-as.data.table(CSA_NB)
+area<-area[,.(LABEL,ShapeSTAre)]
+
+
+# for pop
+#tract pop~~~!!!
+tr_census<-get_acs(geography ='tract',
+          variables = 'B01003_001',
+          state = "CA",
+         survey = "acs5",
+         county = 'Los Angeles')
+
+tr_census<-as.data.table(tr_census)
+tr_census<-tr_census[,GEOID:=substring(tr_census$GEOID,2,12)]
+tr_census<-tr_census[,.(GEOID,estimate)]
+
+
+# nb_pop
+pop_nb<-merge(tr_census,CSA_nb,by.x= 'GEOID',by.y='GEOID_NEW',all.x = T)
+
+pop_nb<-pop_nb[,sum(estimate), by= CSA_NAME]
+
+rural_nb<-merge(pop_nb,area,by.x= 'CSA_NAME',by.y='LABEL',all.x = T)
+rural_nb[,population_density:= V1 / ShapeSTAre]
+
+
+rural_nb[order(population_density)] #remove all NB which population_density <= 1.0E-06  。共24个
+
+rural_nb<-rural_nb[population_density<1e-05]
+rural_nb<-as.vector(rural_nb$CSA_NAME)  
+rural_nb
+
+```
+```{R}
+v0_la_sd_after01<-v0_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+v1_la_sd_after01<-v1_la_sd_after01[,origin_census_block_group:= as.character(origin_census_block_group)]
+
+v0_la_sd_after01<-as.data.table(v0_la_sd_after01)
+v1_la_sd_after01<-as.data.table(v1_la_sd_after01)
+
+
+#based on NB, merge them
+v0_la_sd_after01[,GEOID_NEW:=as.character(substring(v0_la_sd_after01$origin_census_block_group,1,10))]
+v0_la_sd_CSA<-merge(v0_la_sd_after01,CSA_nb,by='GEOID_NEW',all.x = T)
+
+##remove rural _NB
+v0_la_sd_CSA<-v0_la_sd_CSA[!(CSA_NAME %in% rural_nb)]
+
+
+
+
+#----------#
+#for v1
+#merge
+v1_la_sd_after01[,GEOID_NEW:=as.character(substring(v1_la_sd_after01$origin_census_block_group,1,10))]
+v1_la_sd_CSA<-merge(v1_la_sd_after01,CSA_nb,by='GEOID_NEW',all.x = T)
+
+
+##remove rural _NB
+v1_la_sd_CSA<-v1_la_sd_CSA[!(CSA_NAME %in% rural_nb)]
+```
+
+
+
+# 1A. Daily pattern --completely_home_device_count
+
+#NB_adjusted_count = sum over NB(variable_of_interest_raw_count)/ sum over NB(device_count)   ----CT也这么算
+```{R}
+#aggregate to NB：
+#V1就是 adj——completely_home_device_count --NB层面（建议之后改名）
+aj_v0_nb_sd<-v0_la_sd_CSA[,sum(completely_home_device_count)/sum(device_count),by=.(CSA_NAME,start_date)]
+
+#本身有130个NA--row---直接删去这些行吧： sum(is.na(aj_v0_nb_sd$CSA_NAME))
+aj_v0_nb_sd<-na.omit(aj_v0_nb_sd)
+#sum(is.na(aj_v0_nb_sd$CSA_NAME))
+
+####base处有个大问题，跟LAC不同，NB是262条线，因此有262个不同的base（03/01），因此不能像LAC那样用固定值，要学cbg的办法。
+
+#v0
+#以03/01 2020为base
+#V1 相当于是 aj_completely_home_device_count的总和  
+aj_v0_nb_sd<-aj_v0_nb_sd[start_date>'2020-03-01']
+
+#merge base:start_date='2020-03-01'
+aj_v0_nb_sd_base<-aj_v0_nb_sd[start_date=='2020-03-02']  # 263 nb---base_value
+setnames(aj_v0_nb_sd_base,'V1', 'V1_base' )
+aj_v0_nb_sd_base<-aj_v0_nb_sd_base[,.(CSA_NAME,V1_base)]
+
+aj_v0_nb_sd<-merge(aj_v0_nb_sd,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v0_nb_sd[,zeta_chdc:=V1/V1_base]
+#aj_v0_nb_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+##处理0值。。。
+#sum(is.na(aj_v0_nb_sd$zeta_chdc))
+
+
+
+
+
+
+
+#for v1, 2020年05/10及之后---也对比2020年03/01:aj_v0_nb_sd_base
+##aggre
+aj_v1_nb_sd<-v1_la_sd_CSA[,sum(completely_home_device_count)/sum(device_count),by=.(CSA_NAME,start_date)]
+##删去NA
+#sum(is.na(aj_v1_nb_sd$CSA_NAME))
+aj_v1_nb_sd<-na.omit(aj_v1_nb_sd)
+
+aj_v1_nb_sd<-aj_v1_nb_sd[start_date>='2020-05-11']
+
+#merge with aj_v1_nb_sd_base
+aj_v1_nb_sd<-merge(aj_v1_nb_sd,aj_v0_nb_sd_base, by='CSA_NAME',all.x=T)
+
+
+aj_v1_nb_sd[,zeta_chdc:=V1/V1_base]
+#aj_v1_nb_sd[,dod_chdc:=c(0,diff(zeta_chdc))]
+
+
+```
+
+DoD: Combine v0,v1
+in NB (neighborhood) level
+```{R}
+
+aj_com_nb_sd<-rbind(aj_v0_nb_sd,aj_v1_nb_sd)
+#set dod
+aj_com_nb_sd<-aj_com_nb_sd[order(CSA_NAME,start_date)]
+aj_com_nb_sd[,dod_chdc:=c(0,diff(zeta_chdc)), by=CSA_NAME]
+
+
+nb_dod_com <-aj_com_nb_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ dod_chdc, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001)%>%
+  layout(title = "dod_com_neighborhood'") 
+nb_dod_com
+```
+
+```{R}
+nb_zeta_com <-aj_com_nb_sd %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ zeta_chdc, color = ~ factor(CSA_NAME), type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+  layout(title = "zeta_com_neighborhood'") 
+nb_zeta_com
+```
+
+
+
+
+
+
+
+-------
+
+*****************************************************
+************************week**************************
+
+#1B. wow and zeta
+
+
+```{R}
+#for v0
+#completely_home_device_count_week本身已经sum了。。。
+
+aj_v0_nb_sd_wow <- v0_la_sd_CSA[,sum(completely_home_device_count)/sum(device_count),by=.(CSA_NAME,which_week)]
+#add date
+date_v0_nb<-v0_la_sd_CSA[,.(which_week,week,start_date)]
+date_v0_nb<-unique(date_v0_nb[week == 'Saturday'])
+
+
+aj_v0_nb_sd_wow_wp<-inner_join(aj_v0_nb_sd_wow,date_v0_nb, by='which_week',all.x=T)
+
+#base  ---2020/03-08 the first week of March 
+
+
+#for v1
+aj_v1_nb_sd_wow <- v1_la_sd_CSA[,sum(completely_home_device_count)/sum(device_count),by=.(CSA_NAME,which_week)]
+
+#添加日期轴，为了做时间序列。
+date_v1_nb<-v1_la_sd_CSA[,.(which_week,week,start_date)]
+date_v1_nb<-unique(date_v1_nb[week == 'Saturday'])
+
+aj_v1_nb_sd_wow_wp<-inner_join(aj_v1_nb_sd_wow,date_v1_nb, by='which_week',all.x=T)
+
+#base()  ---2020/ the first week of March
+
+```
+
+
+#wow & zeta
+```{R}
+#for v0
+#sum(is.na(aj_v0_nb_sd_wow_wp$CSA_NAME))
+aj_v0_nb_sd_wow_wp<-na.omit(aj_v0_nb_sd_wow_wp)
+aj_v0_nb_sd_wow_wp<-as.data.table(aj_v0_nb_sd_wow_wp)
+
+#set baseline
+aj_v0_nb_sd_wow_wp_base<-aj_v0_nb_sd_wow_wp[start_date=='2020-03-07']
+setnames(aj_v0_nb_sd_wow_wp_base,'V1', 'V1_base' )
+#merge
+aj_v0_nb_sd_wow_wp<-inner_join(aj_v0_nb_sd_wow_wp,aj_v0_nb_sd_wow_wp_base, by = 'CSA_NAME',all.x=T)
+aj_v0_nb_sd_wow_wp<-as.data.table(aj_v0_nb_sd_wow_wp)
+
+#set zeta
+aj_v0_nb_sd_wow_wp[,zeta_achdc_w:=V1 / V1_base]
+#aj_v0_nb_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w)),, by=CSA_NAME]
+
+
+
+
+
+#for v1
+#sum(is.na(aj_v1_nb_sd_wow_wp$CSA_NAME))
+aj_v1_nb_sd_wow_wp<-na.omit(aj_v1_nb_sd_wow_wp)
+aj_v1_nb_sd_wow_wp<-as.data.table(aj_v1_nb_sd_wow_wp)
+##merge
+aj_v1_nb_sd_wow_wp<-inner_join(aj_v1_nb_sd_wow_wp,aj_v0_nb_sd_wow_wp_base, by='CSA_NAME',all.x=T)
+
+#set zeta
+aj_v1_nb_sd_wow_wp<-as.data.table(aj_v1_nb_sd_wow_wp)
+aj_v1_nb_sd_wow_wp[,zeta_achdc_w:=V1 / V1_base]
+#aj_v1_nb_sd_wow_wp[,dod_achdc_w:=c(0,diff(zeta_achdc_w)), by=CSA_NAME]
+```
+
+
+combine them v0+v1 in NB level:
+```{R}
+
+aj_com_nb_sd_wow_wp<-rbind(aj_v0_nb_sd_wow_wp,aj_v1_nb_sd_wow_wp)
+#set wow
+aj_com_nb_sd_wow_wp<-aj_com_nb_sd_wow_wp[order(CSA_NAME,start_date.x)]
+aj_com_nb_sd_wow_wp[,wow_achdc_w:=c(0,diff(zeta_achdc_w)), by=CSA_NAME]
+
+
+
+nb_wow_com <-aj_com_nb_sd_wow_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ wow_achdc_w, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: wow of adjusted 'completely_home_device_count'")
+nb_wow_com
+
+
+```
+
+
+
+```{R}
+nb_zeta_com_wp <-aj_com_nb_sd_wow_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date.x, y = ~ zeta_achdc_w, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.1,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_week_P_NB: zeta of adjusted 'completely_home_device_count'")
+
+nb_zeta_com_wp
+
+#write.csv(aj_com_nb_sd_wow_wp,'aj_com_nb_sd_wow_wp.csv',row.names = F)
+```
+
+
+
+
+
+
+
+
+# 2.Timeseries line plot of the device count variable for each neighborhood, each week (we want to see how much this is changing over time)
+
+##for v0
+#device_count_week
+
+
+
+v0_nb_sd_dc<-v0_la_sd_CSA[week == 'Saturday']
+v0_nb_sd_dc_wp<-v0_nb_sd_dc[,.(CSA_NAME,which_week,device_count,start_date)]
+
+v0_nb_sd_dc_wp<-v0_nb_sd_dc_wp[,sum(device_count),by =.(CSA_NAME,which_week)]
+
+#NA--sum(is.na(v0_nb_sd_dc_wp))
+v0_nb_sd_dc_wp<-na.omit(v0_nb_sd_dc_wp)
+
+
+v0_nb_sd_dc_wp<-inner_join(v0_nb_sd_dc_wp,date_v0_nb, by='which_week',all.x=T)
+
+
+
+
+##for v1
+
+v1_nb_sd_dc<-v1_la_sd_CSA[week == 'Saturday']
+v1_nb_sd_dc_wp<-v1_nb_sd_dc[,.(CSA_NAME,which_week,device_count,start_date)]
+
+v1_nb_sd_dc_wp<-v1_nb_sd_dc_wp[,sum(device_count),by =.(CSA_NAME,which_week)]
+#NA--sum(is.na(v1_nb_sd_dc_wp))
+v1_nb_sd_dc_wp<-na.omit(v1_nb_sd_dc_wp)
+
+
+v1_nb_sd_dc_wp<-inner_join(v1_nb_sd_dc_wp,date_v1_nb, by='which_week',all.x=T)
+
+
+
+
+------
+
+com_nb_sd_dc_wp<-rbind(v0_nb_sd_dc_wp,v1_nb_sd_dc_wp)
+
+
+nb_dc_com <-com_nb_sd_dc_wp %>% 
+  mutate() %>% 
+  plot_ly(x = ~ start_date, y = ~ V1, color = ~ factor(CSA_NAME),type = 'scatter', mode = 'lines',
+          alpha=0.2,line.width = 0.00001,span=0.00001) %>%
+    layout(title = "com_device_count_NB of adjusted 'completely_home_device_count'")
+nb_dc_com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--------
+
+# 3.Mapping -- NB
+
+
+地图：LA的NB图，然后每块NB的颜色由zeta的值来确定（each周值）---只做3月1号开始每个月的第一周（Week of March 1 2020）。。。Week of March 1 2021
+这件事弄完注意修改 01文件，做一个caj来对比结果。
+
+MAP：
+colored by its value of *Zeta_i(t)* for this_variable for each week
+（可视化每个月的第一周，try组合图。。）
+○ Week of March 1 2020
+○ Week of April 1 2020
+○ Week of May 1 2020 ○...
+○ Week of March 1 2021
+
+
+
+```{R}
+#CSA_NB :neighbor 级别分块。
+CSA_NB<-st_read('/Users/huangtao/Desktop/covid_19_keck_Research/CSA/data/shapefiles/CSAs/Countywide_Statistical_Areas_(CSA).shp')
+
+CSA_NB$LABEL<-gsub('[U]nincorporated - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('City of ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Los Angeles - ','',CSA_NB$LABEL)
+CSA_NB$LABEL<-gsub('Silverlake','Silver Lake',CSA_NB$LABEL)
+
+```
+#for nb
+```{R}
+#nb_wp3
+#aj_com_nb_sd_wow_wp
+nb_wp3<-aj_com_nb_sd_wow_wp[start_date.x=='2020-03-07']
+nb_wp3<-nb_wp3[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp3,'CSA_NAME','LABEL')
+nb_wp3<-as.data.frame(nb_wp3)
+#map_nb_wp3
+map_nb_wp3<-inner_join(CSA_NB,nb_wp3)
+
+#
+
+
+#nb_wp4
+nb_wp4<-aj_com_nb_sd_wow_wp[start_date.x=='2020-04-04']
+nb_wp4<-nb_wp4[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp4,'CSA_NAME','LABEL')
+nb_wp4<-as.data.frame(nb_wp4)
+#map_nb_wp4
+map_nb_wp4<-inner_join(CSA_NB,nb_wp4)
+
+
+#nb_wp5
+nb_wp5<-aj_com_nb_sd_wow_wp[start_date.x=='2020-05-02']
+nb_wp5<-nb_wp5[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp5,'CSA_NAME','LABEL')
+nb_wp5<-as.data.frame(nb_wp5)
+#map_nb_wp4
+map_nb_wp5<-inner_join(CSA_NB,nb_wp5)
+
+
+
+
+#nb_wp7
+nb_wp7<-aj_com_nb_sd_wow_wp[start_date.x=='2020-07-04']
+nb_wp7<-nb_wp7[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp7,'CSA_NAME','LABEL')
+nb_wp7<-as.data.frame(nb_wp7)
+#map_nb_wp4
+map_nb_wp7<-inner_join(CSA_NB,nb_wp7)
+
+
+
+
+#nb_wp9
+nb_wp9<-aj_com_nb_sd_wow_wp[start_date.x=='2020-09-05']
+nb_wp9<-nb_wp9[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp9,'CSA_NAME','LABEL')
+nb_wp9<-as.data.frame(nb_wp9)
+#map_nb_wp4
+map_nb_wp9<-inner_join(CSA_NB,nb_wp9)
+
+
+
+
+
+
+#nb_wp11
+nb_wp11<-aj_com_nb_sd_wow_wp[start_date.x=='2020-11-07']
+nb_wp11<-nb_wp11[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp11,'CSA_NAME','LABEL')
+nb_wp11<-as.data.frame(nb_wp11)
+#map_nb_wp4
+map_nb_wp11<-inner_join(CSA_NB,nb_wp11)
+
+
+
+
+#nb_wp13
+nb_wp13<-aj_com_nb_sd_wow_wp[start_date.x=='2021-01-02']
+nb_wp13<-nb_wp13[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp13,'CSA_NAME','LABEL')
+nb_wp13<-as.data.frame(nb_wp13)
+#map_nb_wp4
+map_nb_wp13<-inner_join(CSA_NB,nb_wp13)
+
+#nb_wp14
+nb_wp14<-aj_com_nb_sd_wow_wp[start_date.x=='2021-02-06']
+nb_wp14<-nb_wp14[,.(CSA_NAME,zeta_achdc_w)]
+setnames(nb_wp14,'CSA_NAME','LABEL')
+nb_wp14<-as.data.frame(nb_wp14)
+#map_nb_wp4
+map_nb_wp14<-inner_join(CSA_NB,nb_wp14)
+
+```
+
+
+
+
+```{R}
+
+#MAP 
+map_nb_wp3 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5),  legend = TRUE
+          ,layer.name = "2020-03_Baseline") 
+map_nb_wp4 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = '2020-04_%change_CHDC')
+      
+map_nb_wp5 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-05_%change_CHDC") 
+
+map_nb_wp7 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5),  legend = TRUE
+          ,layer.name = "2020-07_%change_CHDC") 
+
+```
+
+```{R}
+#MAP 
+
+map_nb_wp9 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-09_%change_CHDC") 
+
+map_nb_wp11 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2020-11_%change_CHDC") 
+
+
+map_nb_wp13 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5), legend = TRUE
+          ,layer.name = "2021-01_%change_CHDC") 
+
+
+map_nb_wp14 %>% 
+  mapview(zcol = "zeta_achdc_w",at = c(0,1,1.5,2,2.5,3,4,5),  legend = TRUE
+          ,layer.name = "2021-02_%change_CHDC") 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
